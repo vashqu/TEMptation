@@ -1,0 +1,347 @@
+================================================================================
+  NERVE FIBER ANALYZER — HOW TO USE
+================================================================================
+
+OVERVIEW
+--------
+Two tools are provided for segmenting and measuring nerve fibers from
+transmission electron microscopy (TEM) images paired with segmentation masks:
+
+  measure_nerve_gui.py   — graphical interface (point-and-click)
+  measure_nerve.py       — command-line interface (terminal / scripts)
+
+Both tools share the same core analysis engine and produce identical output.
+
+
+================================================================================
+SECTION 1 — INSTALLATION
+================================================================================
+
+Requirements: Python 3.11, conda recommended.
+
+1. Create and activate a conda environment:
+
+     conda create -n nerve_env python=3.11
+     conda activate nerve_env
+
+2. Install dependencies:
+
+     pip install -r requirements.txt
+
+   On some systems tkinter (needed for the GUI) requires a separate step:
+     macOS (Homebrew Python):  brew install python-tk
+     conda:                    conda install tk
+
+3. Verify installation:
+
+     python -c "import numpy, scipy, skimage, pandas, tifffile, matplotlib; print('OK')"
+
+
+================================================================================
+SECTION 2 — INPUT FILES
+================================================================================
+
+The tool expects pairs of TIFF images:
+  - TEM image   : the raw greyscale electron micrograph
+  - Mask image  : a segmentation mask with specific pixel-intensity labels
+
+MASK PIXEL VALUES (defaults, configurable):
+  64   → Myelin sheath
+  128  → Mitochondria
+  192  → Axoplasm (axon interior, excluding mitochondria)
+  0    → Background / extracellular space
+
+SUPPORTED FILE NAMING CONVENTIONS:
+
+  Pattern A — underscore prefix (for --folder / batch mode):
+    tem_001.tif   or   axon_001.tif   →  TEM image
+    mask_001.tif                       →  mask image
+    Pairs are matched by the <id> after the first underscore.
+
+  Pattern B — numeric prefix with tissue keyword (e.g., data from this repo):
+    152. Axon 20K.tif   →  TEM image
+    152. Mask 20K.tif   →  mask image
+    Pairs are matched by the leading integer.
+
+
+================================================================================
+SECTION 3 — GRAPHICAL INTERFACE (measure_nerve_gui.py)
+================================================================================
+
+Launch:
+    conda activate nerve_env
+    python measure_nerve_gui.py
+
+-----
+3.1 SINGLE IMAGE MODE (default)
+-----
+
+Step 1 — Select files
+  • Input mode: "Single image" (selected by default)
+  • Click "Browse…" next to "TEM image" to load your TEM file (optional;
+    needed only for the overlay plot)
+  • Click "Browse…" next to "Mask image" to load your mask file (required)
+  • After loading the mask, detected pixel values and counts are shown below
+    the mask row — verify the values match the mask label scheme
+
+Step 2 — Set parameters (see Section 5 for details on each parameter)
+  • Pixel size (µm/px): Most important setting. Computed as:
+        pixel_size = scale_bar_length_um / scale_bar_length_px
+    Example: if the scale bar is 1 µm and spans 191 pixels → 1/191 ≈ 0.00524
+  • Mode: auto (recommended), normal, or pathological
+  • All other parameters can be left at defaults for most images
+
+Step 3 — Run
+  • Click "▶ Run Analysis"
+  • Results appear in the tabs below:
+      "Axon Metrics"    — one row per detected axon
+      "Image Summary"   — one-row summary for the image
+
+Step 4 — Plot (optional, requires TEM image)
+  • Click "Show Overlay Plot" to view the TEM with tissue-type colour overlay
+    and axon ID labels
+
+Step 5 — Export
+  • Click "Export CSV…" and choose a save location
+  • Two files are saved:
+      axons.csv              — axon-level data
+      axons_image_summary.csv — image-level summary
+
+-----
+3.2 BATCH FOLDER MODE
+-----
+
+Step 1 — Switch to batch mode
+  • Select "Batch folder" in the Input mode row
+
+Step 2 — Select a folder
+  • Click "Browse folder…" and select the folder containing your paired files
+  • The info line below will show how many TEM+mask pairs were detected
+  • If no pairs are found, check that file names follow one of the naming
+    conventions described in Section 2
+
+Step 3 — Set parameters
+  • Same as single-image mode; these parameters are applied to every image
+
+Step 4 — Run
+  • Click "▶ Run Analysis"
+  • Status bar updates as each image is processed (e.g. "Processing 3/12: 154…")
+  • When complete, both result tabs show the combined data from all images
+  • The "image_id" column identifies which image each row belongs to
+
+Step 5 — Export
+  • Click "Export CSV…" — the combined (all-images) data is saved
+
+
+================================================================================
+SECTION 4 — COMMAND-LINE INTERFACE (measure_nerve.py)
+================================================================================
+
+Usage summary:
+    python measure_nerve.py [INPUT] [SCALE] [OPTIONS]
+
+INPUT (mutually exclusive):
+    --tem <file>  --mask <file>   single image pair
+    --folder <dir>                batch — all pairs in folder
+
+SCALE (exactly one required):
+    --pixel-um <float>            pixel size in µm/px  (e.g. 0.00524)
+    --bar <PX> <UM>               scale bar: length in pixels, then in µm
+                                  (e.g. --bar 191 1)
+
+-----
+4.1 EXAMPLES
+-----
+
+Single image, pixel size from scale bar, show plot:
+    python measure_nerve.py \
+        --tem "152. Axon 20K.tif" \
+        --mask "152. Mask 20K.tif" \
+        --bar 191 1 \
+        --plot
+
+Whole folder, explicit pixel size, pathological mode:
+    python measure_nerve.py \
+        --folder ./normal_data/152-159 \
+        --pixel-um 0.00524 \
+        --mode pathological
+
+Weighted watershed with area weight, save outputs to specific folder:
+    python measure_nerve.py \
+        --tem img.tif --mask mask.tif \
+        --bar 191 1 \
+        --watershed-mode weighted \
+        --watershed-weight area \
+        --output-dir ./results
+
+-----
+4.2 OUTPUT FILES
+-----
+
+CSV files are written to the folder containing the input images (or to
+--output-dir if specified):
+
+    axons.csv          — axon-level metrics (one row per axon per image)
+    image_summary.csv  — image-level summary (one row per image)
+
+When --plot is set, overlay PNGs are saved alongside the CSVs:
+    overlay_<id>.png
+
+-----
+4.3 ALL CLI OPTIONS
+-----
+
+  --folder DIR              Folder to process (batch mode)
+  --tem FILE                TEM image file (single mode)
+  --mask FILE               Mask image file (single mode)
+  --pixel-um FLOAT          Pixel size in µm/px
+  --bar PX UM               Scale bar (pixels then µm)
+  --mode {auto,normal,pathological}   Segmentation mode (default: auto)
+  --myelin-threshold INT    Myelin pixel count threshold for auto mode (default: 200)
+  --myelin-val INT          Mask pixel value for myelin (default: 64)
+  --axoplasm-val INT        Mask pixel value for axoplasm (default: 192)
+  --mito-val INT            Mask pixel value for mitochondria (default: 128)
+  --smoothing-radius INT    Morphological smoothing radius in px (default: 1)
+  --min-axon-area INT       Minimum axon area in px to keep (default: 200)
+  --min-myelin-area INT     Minimum myelin area for myelin metrics (default: 300)
+  --watershed-mode {simple,weighted}  Watershed variant (default: weighted)
+  --watershed-weight {radius,area}    Weight metric for weighted watershed (default: radius)
+  --watershed-compactness FLOAT       Watershed compactness (default: 0.001)
+  --watershed-beta FLOAT    Bias strength for weighted watershed (default: 1.0)
+  --assign-detached-myelin {none,nearest}  Handle detached myelin (default: none)
+  --output-dir DIR          Directory for CSV and plot outputs
+  --plot                    Save and display overlay plots
+
+
+================================================================================
+SECTION 5 — PARAMETER GUIDE
+================================================================================
+
+PIXEL SIZE (most critical parameter)
+  Converts pixel measurements to physical units (µm).
+  Derive it from your scale bar:
+      pixel_size_um = scale_bar_um / scale_bar_px
+  Example: 1 µm scale bar spanning 191 pixels → 0.00524 µm/px
+
+MODE
+  auto        — detects mode from mask; uses normal if myelin pixel count
+                exceeds --myelin-threshold (default 200)
+  normal      — expects intact myelin sheath; computes g-ratio, myelin
+                thickness, and myelin volume fraction (MVF)
+  pathological — no myelin expected; myelin-dependent metrics are NaN
+
+WATERSHED MODE
+  weighted (default) — larger axons expand further into shared myelin territory;
+                        better for images with size-mixed fiber populations
+  simple             — standard distance-transform watershed (equal expansion)
+
+WATERSHED BETA
+  Controls how strongly axon size biases boundary placement in weighted mode.
+  Elevation = max(distance − β × weight, 0)
+  Higher β → larger axons claim more territory. Start at 1.0.
+
+SMOOTHING RADIUS
+  Morphological opening/closing applied to binary masks before segmentation.
+  Set to 0 to disable. Increase (2–3) if masks have noisy edges.
+
+MIN AXON AREA
+  Objects smaller than this (pixels) are discarded as noise before watershed.
+  Increase if spurious tiny blobs appear; decrease if small axons are missed.
+
+MIN MYELIN AREA
+  Below this threshold, myelin-dependent metrics are set to NaN for that axon,
+  but the axon row is still kept in the output.
+
+ASSIGN DETACHED MYELIN
+  When enabled, myelin pixels not enclosed by a watershed fiber are attributed
+  to the nearest axon by Euclidean distance. Useful for pathological images
+  where myelin has partially detached from the axon.
+
+
+================================================================================
+SECTION 6 — OUTPUT COLUMNS
+================================================================================
+
+AXON-LEVEL (axons.csv):
+  image_id                  — source image identifier
+  mode                      — normal or pathological
+  axon_id                   — unique axon label in this image
+  axon_area_um2             — axon cross-sectional area (µm²)
+  myelin_area_um2           — myelin area (µm²); NaN in pathological
+  fiber_area_um2            — total fiber area (axon + myelin) (µm²)
+  d_inner_um                — equivalent axon diameter (µm)
+  d_outer_um                — equivalent fiber diameter (µm); NaN in pathological
+  g_ratio                   — d_inner / d_outer; NaN in pathological
+  myelin_thickness_um       — (d_outer − d_inner) / 2; NaN in pathological
+  perimeter_um              — axon perimeter (µm)
+  eccentricity              — 0 = circle, 1 = line segment
+  solidity                  — area / convex_hull_area
+  circularity               — 4π·area / perimeter²  (1 = perfect circle)
+  convexity                 — convex_hull_perimeter / perimeter
+  axon_vol_fraction         — axon area / fiber area (AVF)
+  myelin_vol_fraction       — myelin area / fiber area (MVF); NaN in pathological
+  centroid_x_um, _y_um      — centroid coordinates in µm
+  centroid_x_px, _y_px      — centroid coordinates in pixels
+  mito_count                — number of mitochondria in this axon
+  mito_area_um2             — total mitochondria area (µm²)
+  mito_density_per_um2      — mitochondria count per µm²
+  mito_mean_circularity     — mean circularity across mito objects
+  mito_mean_form_factor     — mean form factor (perimeter²/4π·area) across mito objects
+  mito_mean_feret_um        — mean max Feret diameter across mito objects (µm)
+  mito_std_area_um2         — std of individual mito areas (size heterogeneity)
+  mito_max_area_um2         — largest single mito area
+  mito_cv_area              — coefficient of variation of mito areas
+  mito_area_skewness        — skewness of mito area distribution
+  mito_mean_dist_centroid_um — mean distance of mito centroids from axon centroid
+  mito_std_dist_centroid_um  — std of those distances (spatial clustering)
+  nearest_neighbor_um       — distance to nearest other axon centroid (µm)
+
+IMAGE-LEVEL (image_summary.csv):
+  image_id, mode
+  n_fibers                  — total detected axons
+  fov_area_um2              — field-of-view area (µm²)
+  fiber_density_per_mm2     — axons per mm²
+  mean_axon_area_um2        — mean axon area
+  mean_circularity          — mean axon circularity
+  mean_convexity            — mean axon convexity
+  mean_avf                  — mean axon volume fraction
+  mean_g_ratio              — mean g-ratio (NaN in pathological)
+  mean_myelin_thickness_um  — mean myelin thickness (NaN in pathological)
+  mean_mvf                  — mean myelin volume fraction (NaN in pathological)
+  mito_outside_area_um2     — area of mitochondria outside axon+myelin regions
+  mito_outside_frac         — fraction of mito pixels outside axon+myelin
+  total_myelin_area_um2     — total myelin area in image
+  myelin_area_fraction_of_fov — myelin area as fraction of FOV
+  myelin_component_count    — number of connected myelin components
+
+
+================================================================================
+SECTION 7 — TIPS AND TROUBLESHOOTING
+================================================================================
+
+"No axons detected"
+  • Check that --myelin-val, --axoplasm-val, --mito-val match your mask values
+  • The GUI shows detected pixel values when you load a mask
+  • Try lowering --min-axon-area if axons are small
+
+"No TEM+mask pairs found" (batch mode)
+  • File names must contain 'axon', 'tem', or 'mask' (case-insensitive)
+  • Pairs are matched by leading integer (Pattern B) or by the ID after the
+    first underscore (Pattern A)
+
+Myelin metrics all NaN in normal tissue
+  • Increase --myelin-threshold or set --mode normal explicitly
+  • Try lowering --min-myelin-area
+
+Watershed over-segments (too many fibers)
+  • Increase --min-axon-area to discard small spurious objects
+
+Boundary placement looks off
+  • Try --watershed-mode simple to see if it improves
+  • Adjust --watershed-beta (lower = more equal boundary placement)
+
+GUI plot not available after batch run
+  • Batch mode does not show an overlay plot (no single image to display)
+  • Run single-image mode on a specific file to see the overlay
+
+================================================================================

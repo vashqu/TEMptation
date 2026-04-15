@@ -1,0 +1,18 @@
+# measure_nerve.py + measure_nerve_gui.py dependencies
+# Tested on Python 3.11
+# Create env: conda create -n nerve_env python=3.11
+# Activate env: conda activate nerve_env
+# Then:        pip install -r requirements.txt
+#
+# Note: tkinter (required by the GUI) ships with Python but may need a
+# separate install on some systems:
+#   macOS (homebrew python): brew install python-tk
+#   conda:                   conda install tk
+
+numpy==1.26.4
+scipy==1.13.1
+scikit-image==0.24.0
+pandas==2.2.2
+tifffile==2024.7.2
+matplotlib==3.9.1
+Pillow>=10.0.0
