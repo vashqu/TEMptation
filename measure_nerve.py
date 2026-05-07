@@ -32,23 +32,65 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import tifffile as tiff
-import matplotlib
-import matplotlib.pyplot as plt
-import matplotlib.colors as mcolors
 from scipy import ndimage as ndi
 from scipy.stats import skew as scipy_skew
 from skimage.measure import label, regionprops
-from skimage.segmentation import watershed
-from skimage.morphology import (
-    binary_opening, binary_closing, binary_dilation,
-    disk, remove_small_objects,
-)
 from scipy.spatial import cKDTree
+
+from auto_segment import (
+    ADS_MODEL_CHOICES,
+    ADS_MODEL_DESCRIPTIONS,
+    MITOCHONDRIA_NOTE,
+    auto_segment_tem,
+)
 
 
 # ---------------------------------------------------------------------------
 # Helper: convexity (convex_perimeter / perimeter)
 # ---------------------------------------------------------------------------
+
+def _as_2d_mask(mask: np.ndarray) -> np.ndarray:
+    """Return a 2-D label mask, accepting singleton or replicated channels."""
+    mask = np.asarray(mask)
+    if mask.ndim == 2:
+        return mask
+    if mask.ndim == 3:
+        if mask.shape[-1] == 1:
+            return mask[..., 0]
+        first = mask[..., 0]
+        if np.all(mask == first[..., None]):
+            return first
+    raise ValueError(
+        "Mask must be a 2-D label image, a singleton-channel image, or a "
+        "multichannel image with identical channels."
+    )
+
+
+def _validate_inputs(tem: np.ndarray, mask: np.ndarray, pixel_length_um: float) -> tuple[np.ndarray, np.ndarray]:
+    """Validate core measurement inputs and normalize the mask to 2-D."""
+    tem = np.asarray(tem)
+    mask = _as_2d_mask(mask)
+
+    if tem.ndim < 2:
+        raise ValueError("TEM image must have at least two dimensions.")
+    if tem.shape[:2] != mask.shape:
+        raise ValueError(
+            f"TEM image shape {tem.shape[:2]} does not match mask shape {mask.shape}."
+        )
+    if not np.isfinite(pixel_length_um) or pixel_length_um <= 0:
+        raise ValueError("pixel_length_um must be a positive finite number.")
+
+    return tem, mask
+
+
+def _nanmean_or_nan(values) -> float:
+    """Return nanmean without emitting warnings when every value is NaN."""
+    arr = np.asarray(values, dtype=float)
+    arr = arr[~np.isnan(arr)]
+    if arr.size == 0:
+        return float(np.nan)
+    return float(arr.mean())
+
 
 def _convexity(region) -> float:
     """
@@ -150,7 +192,26 @@ def measure_image(
       mito_mean_dist_centroid_um : mean distance of mito centroids from axon centroid
       mito_std_dist_centroid_um  : std of those distances (spatial clustering)
     """
+    tem, mask = _validate_inputs(tem, mask, pixel_length_um)
     px2 = pixel_length_um ** 2
+
+    if smoothing_radius_px < 0:
+        raise ValueError("smoothing_radius_px must be >= 0.")
+    if min_axon_area_px < 0:
+        raise ValueError("min_axon_area_px must be >= 0.")
+    if min_myelin_area_px < 0:
+        raise ValueError("min_myelin_area_px must be >= 0.")
+    if watershed_mode not in ("simple", "weighted"):
+        raise ValueError("watershed_mode must be 'simple' or 'weighted'.")
+    if watershed_weight not in ("radius", "area"):
+        raise ValueError("watershed_weight must be 'radius' or 'area'.")
+    if assign_detached_myelin not in ("none", "nearest"):
+        raise ValueError("assign_detached_myelin must be 'none' or 'nearest'.")
+
+    from skimage.morphology import (
+        binary_opening, binary_closing, binary_dilation,
+        disk, remove_small_objects,
+    )
 
     # ------------------------------------------------------------------
     # 1. Resolve mode (auto-detect if needed)
@@ -185,9 +246,14 @@ def measure_image(
     # ------------------------------------------------------------------
     # 3. Axon seeds
     # ------------------------------------------------------------------
-    axon_lab = label(axoplasm, connectivity=2)
-    axon_lab = remove_small_objects(axon_lab, min_size=min_axon_area_px)
-    axon_lab = label(axon_lab > 0, connectivity=2)
+    axon_seed_mask = axoplasm
+    if min_axon_area_px > 0:
+        axon_seed_mask = remove_small_objects(
+            axon_seed_mask,
+            min_size=min_axon_area_px,
+            connectivity=2,
+        )
+    axon_lab = label(axon_seed_mask, connectivity=2)
 
     # ------------------------------------------------------------------
     # 4. Watershed
@@ -201,6 +267,8 @@ def measure_image(
         elevation = _build_weighted_distance(axon_lab, watershed_weight, beta=watershed_beta)
     else:  # simple
         elevation = ndi.distance_transform_edt(axon_lab == 0)
+
+    from skimage.segmentation import watershed
 
     labels_ws = watershed(
         elevation,
@@ -224,6 +292,24 @@ def measure_image(
     H, W = mask.shape[:2]
     fov_area_um2 = H * W * px2
 
+    max_ws_label = int(labels_ws.max())
+    fiber_area_lookup = np.bincount(labels_ws.ravel(), minlength=max_ws_label + 1)
+    axon_area_lookup = np.bincount(
+        labels_ws.ravel(),
+        weights=axoplasm.ravel().astype(np.uint8),
+        minlength=max_ws_label + 1,
+    ).astype(np.int64)
+    if assign_detached_myelin == "nearest":
+        myelin_area_lookup = np.bincount(
+            nearest_axon_map_global.ravel(),
+            weights=myelin.ravel().astype(np.uint8),
+            minlength=max_ws_label + 1,
+        ).astype(np.int64)
+    else:
+        myelin_area_lookup = None
+
+    axon_props_by_label = {p.label: p for p in regionprops(axon_lab)}
+
     props = regionprops(labels_ws)
     rows  = []
 
@@ -235,15 +321,15 @@ def measure_image(
         axon_crop       = axoplasm[min_row:max_row, min_col:max_col]
         axon_mask_local = fiber_crop & axon_crop
 
-        axon_area_px = int(axon_mask_local.sum())
+        axon_area_px = int(axon_area_lookup[fiber_id])
         if axon_area_px == 0:
             continue
 
         if assign_detached_myelin == "nearest":
-            myelin_area_px = int((myelin & (nearest_axon_map_global == fiber_id)).sum())
+            myelin_area_px = int(myelin_area_lookup[fiber_id])
             fiber_area_px  = axon_area_px + myelin_area_px
         else:
-            fiber_area_px  = p.area
+            fiber_area_px  = int(fiber_area_lookup[fiber_id])
             myelin_area_px = fiber_area_px - axon_area_px
 
         # --- Unit conversion ---
@@ -265,26 +351,24 @@ def measure_image(
             d_outer          = np.nan
 
         # --- Axon morphology (on the axon mask) ---
-        axon_labeled_local = label(axon_mask_local)
-        axon_rp = regionprops(axon_labeled_local)
-        if not axon_rp:
+        axon_props_global = axon_props_by_label.get(fiber_id)
+        if axon_props_global is None:
             continue
-        axon_props_local = max(axon_rp, key=lambda r: r.area)
 
-        perimeter_um = axon_props_local.perimeter * pixel_length_um
-        eccentricity = axon_props_local.eccentricity
-        solidity     = axon_props_local.solidity
+        perimeter_um = axon_props_global.perimeter * pixel_length_um
+        eccentricity = axon_props_global.eccentricity
+        solidity     = axon_props_global.solidity
 
         # --- NEW: axon circularity ---
         # 4π·area / perimeter²  (pixel units, then converted)
-        axon_perim_px = axon_props_local.perimeter
+        axon_perim_px = axon_props_global.perimeter
         if axon_perim_px > 0:
             circularity = (4.0 * np.pi * axon_area_px) / (axon_perim_px ** 2)
         else:
             circularity = np.nan
 
         # --- NEW: axon convexity (convex_hull_perimeter / perimeter) ---
-        convexity = _convexity(axon_props_local)
+        convexity = _convexity(axon_props_global)
 
         # --- NEW: axon volume fraction (AVF) and myelin volume fraction (MVF) ---
         avf = axon_area_um2 / fiber_area_um2 if fiber_area_um2 > 0 else np.nan
@@ -293,9 +377,9 @@ def measure_image(
         else:
             mvf = np.nan
 
-        cy_local, cx_local = axon_props_local.centroid
-        cy_global = min_row + cy_local
-        cx_global = min_col + cx_local
+        cy_global, cx_global = axon_props_global.centroid
+        cy_local = cy_global - min_row
+        cx_local = cx_global - min_col
         cx_um = cx_global * pixel_length_um
         cy_um = cy_global * pixel_length_um
 
@@ -348,9 +432,9 @@ def measure_image(
 
             mito_areas_arr = np.array(mito_areas_um2)
 
-            mito_mean_circularity = float(np.nanmean(mito_circularities))
-            mito_mean_form_factor = float(np.nanmean(mito_form_factors))
-            mito_mean_feret_um    = float(np.nanmean(mito_ferets_um))
+            mito_mean_circularity = _nanmean_or_nan(mito_circularities)
+            mito_mean_form_factor = _nanmean_or_nan(mito_form_factors)
+            mito_mean_feret_um    = _nanmean_or_nan(mito_ferets_um)
             mito_std_area_um2     = float(np.std(mito_areas_arr)) if mito_count > 1 else 0.0
             mito_max_area_um2     = float(np.max(mito_areas_arr))
             mito_cv_area          = (
@@ -467,7 +551,7 @@ def measure_image(
             summary["mean_myelin_thickness_um"] = np.nan
             summary["mean_mvf"]                 = np.nan
 
-        mito_outside          = (mask == mito_val) & ~(axon_only | myelin)
+        mito_outside          = (mask == mito_val) & ~axoplasm
         mito_outside_area_um2 = float(mito_outside.sum()) * px2
         total_mito_px         = int((mask == mito_val).sum())
         mito_outside_frac     = float(mito_outside.sum()) / max(total_mito_px, 1)
@@ -516,6 +600,9 @@ def make_plot(
       Axoplasm  — orange,      alpha 0.50
       Mito      — red,         alpha 0.80
     """
+    import matplotlib.pyplot as plt
+    from skimage.morphology import binary_dilation, disk
+
     MYELIN_RGBA   = np.array([0.27, 0.51, 0.71, 0.45], dtype=np.float32)
     AXOPLASM_RGBA = np.array([1.00, 0.60, 0.10, 0.50], dtype=np.float32)
     MITO_RGBA     = np.array([0.85, 0.15, 0.15, 0.80], dtype=np.float32)
@@ -648,7 +735,7 @@ def _find_pairs_in_folder(folder: Path):
                 tem_map.setdefault(img_id, f)
 
     def _sort_key(x):
-        return int(x) if x.isdigit() else x
+        return (0, int(x)) if x.isdigit() else (1, x)
 
     pairs = []
     all_ids = set(tem_map) | set(mask_map)
@@ -706,19 +793,82 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--output-dir", type=Path, default=None)
     p.add_argument("--plot", action="store_true")
 
+    auto_grp = p.add_argument_group("Automatic segmentation with AxonDeepSeg")
+    auto_grp.add_argument(
+        "--auto-segment",
+        action="store_true",
+        help="Run AxonDeepSeg on an unlabeled TEM image before morphometry.",
+    )
+    auto_grp.add_argument(
+        "--auto-segment-action",
+        choices=["analyze", "save"],
+        default="analyze",
+        help="'analyze' runs morphometry after auto-segmentation; 'save' only saves the TEM image and generated mask.",
+    )
+    auto_grp.add_argument(
+        "--ads-model",
+        choices=ADS_MODEL_CHOICES,
+        default="generalist",
+        help=(
+            "AxonDeepSeg model. generalist: "
+            + ADS_MODEL_DESCRIPTIONS["generalist"]
+            + " unmyelinated-TEM: "
+            + ADS_MODEL_DESCRIPTIONS["unmyelinated-TEM"]
+        ),
+    )
+    auto_grp.add_argument(
+        "--ads-python",
+        type=Path,
+        default=None,
+        help="Python executable for an environment with AxonDeepSeg installed. Also configurable with AXONDEEPSEG_PYTHON.",
+    )
+    auto_grp.add_argument(
+        "--ads-package-dir",
+        type=Path,
+        default=None,
+        help="Path to a local AxonDeepSeg clone/package directory. Also configurable with AXONDEEPSEG_PATH.",
+    )
+    auto_grp.add_argument(
+        "--ads-model-path",
+        type=Path,
+        default=None,
+        help="Path to a downloaded AxonDeepSeg model folder. If omitted, AxonDeepSeg downloads/uses the selected model.",
+    )
+    auto_grp.add_argument(
+        "--ads-gpu-id",
+        type=int,
+        default=-1,
+        help="GPU id for AxonDeepSeg inference; -1 uses CPU.",
+    )
+    auto_grp.add_argument(
+        "--ads-allow-large-images",
+        action="store_true",
+        help="Allow AxonDeepSeg to process images above PIL's default large-image limit when supported by the installed version.",
+    )
+    auto_grp.add_argument(
+        "--ads-keep-intermediate",
+        action="store_true",
+        help="Keep AxonDeepSeg intermediate class masks and logs in the output directory.",
+    )
+
     return p
 
 
 def resolve_pixel_length(args) -> float:
     if args.pixel_um is not None:
-        return args.pixel_um
+        pixel_um = args.pixel_um
     elif args.bar is not None:
         bar_px, bar_um = args.bar
-        return bar_um / bar_px
+        if bar_px == 0:
+            raise SystemExit("ERROR: Scale bar pixel length must be nonzero.")
+        pixel_um = bar_um / bar_px
     else:
         raise SystemExit(
             "ERROR: You must provide either --pixel-um or --bar <PX> <UM> to set the scale."
         )
+    if not np.isfinite(pixel_um) or pixel_um <= 0:
+        raise SystemExit("ERROR: Pixel size must be a positive finite number.")
+    return pixel_um
 
 
 def process_pair(
@@ -790,7 +940,48 @@ def main():
     parser = build_parser()
     args   = parser.parse_args()
 
-    if args.folder is not None:
+    if args.auto_segment:
+        if args.folder is not None:
+            parser.error("--auto-segment currently supports single TEM images, not --folder.")
+        if args.mask is not None:
+            parser.error("Do not provide --mask with --auto-segment; the mask is generated automatically.")
+        if args.tem is None:
+            parser.error("Provide --tem FILE with --auto-segment.")
+        if not args.tem.is_file():
+            parser.error(f"--tem file not found: {args.tem}")
+
+        output_dir = args.output_dir or args.tem.parent
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        print(f"Running AxonDeepSeg auto-segmentation with model={args.ads_model!r}")
+        auto_result = auto_segment_tem(
+            tem_path=args.tem,
+            output_dir=output_dir,
+            model_name=args.ads_model,
+            ads_python=args.ads_python,
+            ads_package_dir=args.ads_package_dir,
+            ads_model_path=args.ads_model_path,
+            gpu_id=args.ads_gpu_id,
+            allow_large_images=args.ads_allow_large_images,
+            keep_intermediate=args.ads_keep_intermediate,
+            myelin_val=args.myelin_val,
+            axoplasm_val=args.axoplasm_val,
+        )
+        print(f"Auto-segmented mask → {auto_result.mask_path}")
+        print(f"TEM image           → {auto_result.image_path}")
+        print(f"Note: {MITOCHONDRIA_NOTE}")
+
+        if args.auto_segment_action == "save":
+            print("Auto-segmentation save-only mode complete; morphometry was not run.")
+            return pd.DataFrame()
+
+        pairs = [{
+            "id": args.tem.stem,
+            "tem_path": args.tem,
+            "mask_path": auto_result.mask_path,
+        }]
+
+    elif args.folder is not None:
         if args.tem is not None or args.mask is not None:
             parser.error("Use either --folder OR (--tem + --mask), not both.")
         if not args.folder.is_dir():

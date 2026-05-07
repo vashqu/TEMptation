@@ -1,26 +1,34 @@
-# Nerve Fiber Analyzer
+# TEMptation
 
-Segment and measure nerve fibers from **TEM images + segmentation masks**.  
-Extracts axon morphology, myelin metrics, mitochondria shape features, and image-level summaries.
+TEMptation measures nerve fibers in transmission electron microscopy (TEM)
+images from a raw TEM image and a pixel-labeled segmentation mask. It can also
+optionally call AxonDeepSeg to create an automatic mask from an unlabeled TEM
+image before running the same morphometry pipeline.
 
-Two interfaces are provided — a **GUI** and a **CLI** — sharing the same core engine.
+Two interfaces are available:
 
----
+- `measure_nerve.py` - command-line interface for scripts and batch runs
+- `measure_nerve_gui.py` - Tkinter GUI for interactive use
 
-## Features
+## What It Measures
 
-- **Axon-level metrics:** area, diameters, g-ratio, myelin thickness, circularity, convexity, AVF/MVF
-- **Mitochondria features:** count, area, density, circularity, form factor, Feret diameter, spatial clustering
-- **Image-level summary:** fiber density, mean g-ratio, myelin fraction, mitochondria outside axons
-- **Two watershed modes:** simple or size-weighted (larger axons claim proportionally more myelin territory)
-- **Auto mode detection:** automatically identifies normal vs. pathological tissue from myelin pixel count
-- **Batch processing:** process an entire folder of image pairs in one run (GUI and CLI)
+Axon-level outputs include axon area, fiber area, equivalent diameters,
+g-ratio, myelin thickness, perimeter, eccentricity, solidity, circularity,
+convexity, nearest-neighbor distance, and mitochondria features when
+mitochondria are labeled.
 
----
+Image-level outputs include fiber count, field-of-view area, fiber density,
+mean g-ratio, mean myelin thickness, myelin area fraction, and mitochondria
+outside axon territory.
+
+Note: the axon-level `axon_vol_fraction` and `myelin_vol_fraction` columns are
+per-fiber area fractions computed from each fiber's axon and myelin area. They
+are preserved for compatibility with existing outputs.
 
 ## Installation
 
-> Requires **Python 3.11**. Conda is recommended.
+The lightweight environment is enough when you already have TEM images and
+pixel-labeled masks.
 
 ```bash
 conda create -n nerve_env python=3.11
@@ -28,204 +36,224 @@ conda activate nerve_env
 pip install -r requirements.txt
 ```
 
-> **tkinter** (GUI only) ships with Python but may need a separate step:
-> - macOS Homebrew: `brew install python-tk`
-> - conda: `conda install tk`
-
----
-
-## Input Files
-
-Each analysis requires a **pair** of TIFF files:
-
-| File | Description |
-|------|-------------|
-| TEM image | Raw greyscale electron micrograph |
-| Mask image | Segmentation mask with integer pixel labels |
-
-**Default mask pixel values** (configurable):
-
-| Value | Tissue |
-|-------|--------|
-| 64 | Myelin sheath |
-| 128 | Mitochondria |
-| 192 | Axoplasm |
-| 0 | Background |
-
-**Supported file naming** for batch/folder mode:
-
-| Pattern | TEM file | Mask file |
-|---------|----------|-----------|
-| A — underscore prefix | `tem_001.tif` or `axon_001.tif` | `mask_001.tif` |
-| B — numeric prefix | `152. Axon 20K.tif` | `152. Mask 20K.tif` |
-
-Pairs are matched by the leading integer (Pattern B) or the ID after the first `_` (Pattern A).
-
----
-
-## Graphical Interface
+Verify the install:
 
 ```bash
-conda activate nerve_env
+python -c "import numpy, scipy, skimage, pandas, tifffile, matplotlib; print('OK')"
+```
+
+For the GUI, Tkinter may need a separate install depending on your Python:
+
+```bash
+# conda
+conda install tk
+
+# macOS Homebrew Python
+brew install python-tk
+```
+
+### Optional AxonDeepSeg Environment
+
+Automatic segmentation needs AxonDeepSeg and its deep-learning dependencies.
+Create the optional environment from the TEMptation directory:
+
+```bash
+conda env create -f environment-ads.yml
+conda activate temptation_ads
+```
+
+You can also keep AxonDeepSeg in a separate environment and point TEMptation to
+that Python:
+
+```bash
+export AXONDEEPSEG_PYTHON=/path/to/axondeepseg/env/bin/python
+```
+
+TEMptation automatically looks for a sibling `../axondeepseg` clone. Override
+that with `AXONDEEPSEG_PATH` or the CLI option `--ads-package-dir`.
+
+## Input Masks
+
+The standard workflow expects a raw TEM image and a label mask with the same
+height and width.
+
+Default mask values:
+
+| Value | Meaning |
+| --- | --- |
+| `0` | Background |
+| `64` | Myelin |
+| `128` | Mitochondria |
+| `192` | Axoplasm |
+
+The label values are configurable in both the CLI and GUI.
+
+Batch folder mode supports these naming patterns:
+
+| TEM image | Mask image | Matched ID |
+| --- | --- | --- |
+| `tem_001.tif` or `axon_001.tif` | `mask_001.tif` | `001` |
+| `152. Axon 20K.tif` | `152. Mask 20K.tif` | `152` |
+
+## CLI Usage
+
+Run morphometry from an existing mask:
+
+```bash
+python measure_nerve.py \
+  --tem "152. Axon 20K.tif" \
+  --mask "152. Mask 20K.tif" \
+  --pixel-um 0.00524 \
+  --output-dir ./results
+```
+
+Use a scale bar instead of an explicit pixel size:
+
+```bash
+python measure_nerve.py \
+  --tem "152. Axon 20K.tif" \
+  --mask "152. Mask 20K.tif" \
+  --bar 191 1
+```
+
+Process a folder of matched TEM/mask pairs:
+
+```bash
+python measure_nerve.py \
+  --folder ./normal_data/152-159 \
+  --pixel-um 0.00524 \
+  --output-dir ./results
+```
+
+Run AxonDeepSeg on an unlabeled TEM image and then measure it:
+
+```bash
+python measure_nerve.py \
+  --tem "152. Axon 20K.tif" \
+  --auto-segment \
+  --ads-model generalist \
+  --pixel-um 0.00524 \
+  --output-dir ./results
+```
+
+Save only the TEM image and generated mask for manual refinement:
+
+```bash
+python measure_nerve.py \
+  --tem "152. Axon 20K.tif" \
+  --auto-segment \
+  --auto-segment-action save \
+  --ads-model unmyelinated-TEM \
+  --output-dir ./manual_refinement
+```
+
+Useful options:
+
+| Option | Description |
+| --- | --- |
+| `--mode auto|normal|pathological` | Choose myelin-aware or axon-only metrics; `auto` uses myelin pixel count. |
+| `--watershed-mode weighted|simple` | Assign myelin territory with size-weighted or simple watershed. |
+| `--assign-detached-myelin nearest` | Attribute detached myelin pixels to nearest axon for myelin metrics. |
+| `--plot` | Save an overlay PNG with tissue labels and axon IDs. |
+| `--ads-model generalist|unmyelinated-TEM` | Choose the AxonDeepSeg model for automatic segmentation. |
+| `--ads-python PATH` | Use a specific Python executable that has AxonDeepSeg installed. |
+| `--ads-model-path PATH` | Use an already downloaded AxonDeepSeg model folder. |
+
+Run `python measure_nerve.py --help` for the full option list.
+
+## GUI Usage
+
+Start the GUI:
+
+```bash
 python measure_nerve_gui.py
 ```
 
-### Single image mode (default)
+Single image mode:
 
-1. Leave **Input mode** set to **Single image**
-2. Browse for your **TEM image** (optional — needed only for the overlay plot)
-3. Browse for your **Mask image** (required)
-4. Adjust **Pixel size (µm/px)** — see [Computing pixel size](#computing-pixel-size)
-5. Click **▶ Run Analysis**
-6. View results in the **Axon Metrics** and **Image Summary** tabs
-7. Click **Show Overlay Plot** to visualise the segmentation
-8. Click **Export CSV…** to save results
+1. Select `Single image`.
+2. Choose the TEM image and mask image.
+3. Set `Pixel size (µm/px)`.
+4. Click `Run Analysis`.
+5. Review the `Axon Metrics` and `Image Summary` tabs.
+6. Export CSVs when needed.
 
-### Batch folder mode
+Auto segment mode:
 
-1. Select **Batch folder** in the Input mode row
-2. Click **Browse folder…** and select the folder with your image pairs
-3. The info line shows how many pairs were detected
-4. Set parameters and click **▶ Run Analysis**
-5. The result tables show combined data from all images (`image_id` column identifies each)
-6. Click **Export CSV…** to save the aggregated results
+1. Select `Auto segment`.
+2. Choose an unlabeled TEM image.
+3. Choose `generalist` or `unmyelinated-TEM`.
+4. Choose `analyze` to measure immediately or `save` to save the generated
+   mask for manual refinement.
+5. Click `Run Analysis`.
 
----
+AxonDeepSeg automatic masks do not include mitochondria labels at this point.
+Mitochondria metrics require manual refinement with label value `128`.
 
-## Command-Line Interface
+Batch folder mode:
 
-```
-python measure_nerve.py [INPUT] [SCALE] [OPTIONS]
-```
+1. Select `Batch folder`.
+2. Choose a folder containing matched TEM/mask pairs.
+3. Set the pixel size and parameters.
+4. Click `Run Analysis`.
+5. Export the combined CSV outputs.
 
-### Quick examples
+## Outputs
 
-```bash
-# Single image — pixel size from scale bar, show plot
-python measure_nerve.py \
-    --tem "152. Axon 20K.tif" \
-    --mask "152. Mask 20K.tif" \
-    --bar 191 1 \
-    --plot
-
-# Whole folder — explicit pixel size
-python measure_nerve.py \
-    --folder ./normal_data/152-159 \
-    --pixel-um 0.00524
-
-# Pathological tissue — simple watershed, save to custom folder
-python measure_nerve.py \
-    --tem img.tif --mask mask.tif \
-    --bar 191 1 \
-    --mode pathological \
-    --watershed-mode simple \
-    --output-dir ./results
-```
-
-### All options
-
-| Option | Default | Description |
-|--------|---------|-------------|
-| `--folder DIR` | — | Folder to process (batch mode) |
-| `--tem FILE` | — | TEM image (single mode) |
-| `--mask FILE` | — | Mask image (single mode) |
-| `--pixel-um FLOAT` | — | Pixel size in µm/px |
-| `--bar PX UM` | — | Scale bar length in pixels then µm |
-| `--mode` | `auto` | `auto` / `normal` / `pathological` |
-| `--myelin-threshold INT` | `200` | Myelin px count threshold for auto mode |
-| `--myelin-val INT` | `64` | Mask value for myelin |
-| `--axoplasm-val INT` | `192` | Mask value for axoplasm |
-| `--mito-val INT` | `128` | Mask value for mitochondria |
-| `--smoothing-radius INT` | `1` | Morphological smoothing radius (px) |
-| `--min-axon-area INT` | `200` | Minimum axon size to keep (px) |
-| `--min-myelin-area INT` | `300` | Min myelin area for myelin metrics (px) |
-| `--watershed-mode` | `weighted` | `weighted` / `simple` |
-| `--watershed-weight` | `radius` | `radius` / `area` |
-| `--watershed-compactness FLOAT` | `0.001` | Watershed compactness |
-| `--watershed-beta FLOAT` | `1.0` | Size-bias strength for weighted watershed |
-| `--assign-detached-myelin` | `none` | `none` / `nearest` |
-| `--output-dir DIR` | input folder | Where to save CSVs and plots |
-| `--plot` | off | Save and show overlay plots |
-
-### Output files
+The CLI writes outputs to `--output-dir` or to the input folder by default.
 
 | File | Contents |
-|------|----------|
-| `axons.csv` | One row per axon per image |
-| `image_summary.csv` | One row per image |
-| `overlay_<id>.png` | Tissue overlay with axon IDs (when `--plot`) |
-
----
-
-## Computing pixel size
-
-```
-pixel_size_um = scale_bar_length_um / scale_bar_length_px
-```
-
-Example: a **1 µm** scale bar spanning **191 pixels** → `1 / 191 ≈ 0.00524 µm/px`
-
-Use ImageJ/Fiji to measure the scale bar length in pixels if it is not already known.
-
----
-
-## Output columns (axons.csv)
-
-| Column | Description |
-|--------|-------------|
-| `image_id` | Source image identifier |
-| `mode` | `normal` or `pathological` |
-| `axon_id` | Unique axon label within the image |
-| `axon_area_um2` | Axon cross-sectional area (µm²) |
-| `myelin_area_um2` | Myelin area (µm²); NaN in pathological |
-| `fiber_area_um2` | Total fiber area (axon + myelin) |
-| `d_inner_um` | Equivalent axon diameter (µm) |
-| `d_outer_um` | Equivalent fiber diameter (µm); NaN in pathological |
-| `g_ratio` | d_inner / d_outer; NaN in pathological |
-| `myelin_thickness_um` | (d_outer − d_inner) / 2; NaN in pathological |
-| `perimeter_um` | Axon perimeter (µm) |
-| `eccentricity` | 0 = circle, 1 = line |
-| `solidity` | area / convex_hull_area |
-| `circularity` | 4π·area / perimeter² (1 = perfect circle) |
-| `convexity` | convex_hull_perimeter / perimeter |
-| `axon_vol_fraction` | Axon area / fiber area (AVF) |
-| `myelin_vol_fraction` | Myelin area / fiber area (MVF); NaN in pathological |
-| `centroid_x_um`, `centroid_y_um` | Centroid in µm |
-| `centroid_x_px`, `centroid_y_px` | Centroid in pixels |
-| `mito_count` | Number of mitochondria |
-| `mito_area_um2` | Total mitochondria area |
-| `mito_density_per_um2` | Mitochondria count per µm² |
-| `mito_mean_circularity` | Mean circularity of individual mito objects |
-| `mito_mean_form_factor` | Mean form factor (perimeter²/4π·area) |
-| `mito_mean_feret_um` | Mean max Feret diameter (µm) |
-| `mito_std_area_um2` | Std of mito areas (size heterogeneity) |
-| `mito_max_area_um2` | Largest single mito area |
-| `mito_cv_area` | Coefficient of variation of mito areas |
-| `mito_area_skewness` | Skewness of mito area distribution |
-| `mito_mean_dist_centroid_um` | Mean distance of mito centroids from axon centroid |
-| `mito_std_dist_centroid_um` | Std of those distances |
-| `nearest_neighbor_um` | Distance to nearest axon centroid (µm) |
-
----
+| --- | --- |
+| `axons.csv` | One row per detected axon/fiber. |
+| `image_summary.csv` | One row per image. |
+| `overlay_<id>.png` | Optional overlay when `--plot` is used. |
+| `*_ads_mask.tif` | TEMptation-compatible mask generated by AxonDeepSeg. |
 
 ## Troubleshooting
 
-**No axons detected**
-- Check that mask label values match the parameters (`--myelin-val`, `--axoplasm-val`, `--mito-val`)
-- The GUI displays detected pixel values when you load a mask
-- Try lowering `--min-axon-area`
+No axons detected:
 
-**No TEM+mask pairs found (batch mode)**
-- File names must contain `axon`, `tem`, or `mask` (case-insensitive)
-- Pairs are matched by leading integer or by the ID after the first `_`
+- Confirm the mask values match the configured labels.
+- Lower `--min-axon-area` if small axons are being filtered.
+- Check that TEM and mask dimensions match.
 
-**Myelin metrics all NaN in normal tissue**
-- Increase `--myelin-threshold` or set `--mode normal` explicitly
-- Try lowering `--min-myelin-area`
+Myelin metrics are `NaN`:
 
-**Too many spurious small fibers**
-- Increase `--min-axon-area`
+- The image may have been resolved as pathological mode.
+- Use `--mode normal` if myelin should be measured.
+- Lower `--min-myelin-area` if valid myelin regions are small.
 
-**Watershed boundaries look wrong**
-- Try `--watershed-mode simple`
-- Lower `--watershed-beta` for more equal boundary placement
+AxonDeepSeg does not run:
+
+- Confirm AxonDeepSeg is installed in the current environment or set
+  `AXONDEEPSEG_PYTHON`.
+- Use `--ads-model-path` if models were downloaded manually.
+- CPU inference can be slow; use `--ads-gpu-id 0` when a compatible GPU is
+  available.
+
+Slow import or font-cache warnings:
+
+- Use a writable Matplotlib cache directory, for example:
+  `export MPLCONFIGDIR=/tmp/matplotlib-cache`.
+- Non-plot analysis no longer imports `matplotlib.pyplot` at module import time.
+
+## Development
+
+Before pushing changes, run a quick syntax check and at least one representative
+CLI smoke test with local sample data:
+
+```bash
+python -m py_compile auto_segment.py measure_nerve.py measure_nerve_gui.py
+python measure_nerve.py --tem "../normal_data/152-159/152. Axon 20K.tif" --mask "../normal_data/152-159/152. Mask 20K.tif" --pixel-um 0.00524 --output-dir ./results_TEMPORARY
+```
+
+Generated CSVs, overlays, logs, `__pycache__/`, local virtual environments, and
+`*_TEMPORARY/` result folders are ignored by `.gitignore`.
+
+## Citation
+
+If you use the automatic segmentation option, cite AxonDeepSeg:
+
+Zaimi, A., Wabartha, M., Herman, V. et al. AxonDeepSeg: automatic axon and
+myelin segmentation from microscopy data using convolutional neural networks.
+Sci Rep 8, 3816 (2018). https://doi.org/10.1038/s41598-018-22181-4

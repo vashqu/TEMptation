@@ -16,6 +16,7 @@ Usage:
 """
 
 import sys
+import os
 import threading
 import traceback
 from pathlib import Path
@@ -34,6 +35,12 @@ if str(_this_dir) not in sys.path:
     sys.path.insert(0, str(_this_dir))
 
 from measure_nerve import measure_image, _find_pairs_in_folder  # noqa: E402
+from auto_segment import (  # noqa: E402
+    ADS_MODEL_CHOICES,
+    ADS_MODEL_DESCRIPTIONS,
+    MITOCHONDRIA_NOTE,
+    auto_segment_tem,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -137,6 +144,7 @@ class NerveApp(tk.Tk):
         self._tem_path: str | None      = None
         self._mask_path: str | None     = None
         self._folder_path: str | None   = None
+        self._auto_mask_path: str | None = None
         self._batch_pairs: list         = []
         self._df_axons: pd.DataFrame | None  = None
         self._df_image: pd.DataFrame | None  = None
@@ -256,6 +264,12 @@ class NerveApp(tk.Tk):
             variable=self._batch_mode_var, value="batch",
             command=self._toggle_mode,
         ).pack(side="left", padx=(10, 0))
+        tk.Radiobutton(
+            mode_frame, text="Auto segment", bg=CARD_BG, fg=LBL_FG,
+            activebackground=CARD_BG, selectcolor=CARD_BG,
+            variable=self._batch_mode_var, value="auto",
+            command=self._toggle_mode,
+        ).pack(side="left", padx=(10, 0))
 
         # ---- Single-image frame (row=1) ----
         self._single_frame = tk.Frame(inner, bg=CARD_BG)
@@ -319,19 +333,100 @@ class NerveApp(tk.Tk):
                  anchor="w", justify="left").grid(
             row=1, column=0, columnspan=3, sticky="ew", pady=(2, 0))
 
-        # Grid both content frames into row=1; hide batch frame by default
+        # ---- Auto-segmentation frame (row=1, same slot) ----
+        self._auto_frame = tk.Frame(inner, bg=CARD_BG)
+        self._auto_frame.columnconfigure(1, weight=1)
+
+        tk.Label(self._auto_frame, text="Unlabeled TEM:", bg=CARD_BG, fg=LBL_FG).grid(
+            row=0, column=0, sticky="w", pady=(0, 4))
+        tk.Label(self._auto_frame, textvariable=self._tem_var,
+                 bg=CARD_BG, fg="#999999").grid(
+            row=0, column=1, sticky="w", padx=(8, 0), pady=(0, 4))
+        btn_auto_t = tk.Frame(self._auto_frame, bg=CARD_BG)
+        btn_auto_t.grid(row=0, column=2, sticky="e", padx=(8, 0), pady=(0, 4))
+        ttk.Button(btn_auto_t, text="Browse...", style="Ghost.TButton",
+                   command=self._browse_tem).pack(side="left")
+        ttk.Button(btn_auto_t, text="Clear", style="Ghost.TButton",
+                   command=self._clear_tem).pack(side="left", padx=(4, 0))
+
+        auto_opts = tk.Frame(self._auto_frame, bg=CARD_BG)
+        auto_opts.grid(row=1, column=0, columnspan=3, sticky="w", pady=(4, 2))
+
+        model_tip = (
+            "generalist: " + ADS_MODEL_DESCRIPTIONS["generalist"] + "\n"
+            "unmyelinated-TEM: " + ADS_MODEL_DESCRIPTIONS["unmyelinated-TEM"]
+        )
+        tk.Label(auto_opts, text="ADS model:", bg=CARD_BG, fg=LBL_FG).pack(
+            side="left", padx=(0, 4))
+        self._ads_model_var = tk.StringVar(value="generalist")
+        cb_model = ttk.Combobox(
+            auto_opts,
+            textvariable=self._ads_model_var,
+            values=list(ADS_MODEL_CHOICES),
+            state="readonly",
+            width=18,
+        )
+        cb_model.pack(side="left", padx=(0, 12))
+        Tooltip(cb_model, model_tip)
+
+        tk.Label(auto_opts, text="Auto action:", bg=CARD_BG, fg=LBL_FG).pack(
+            side="left", padx=(0, 4))
+        self._auto_action_var = tk.StringVar(value="analyze")
+        cb_action = ttk.Combobox(
+            auto_opts,
+            textvariable=self._auto_action_var,
+            values=["analyze", "save"],
+            state="readonly",
+            width=10,
+        )
+        cb_action.pack(side="left", padx=(0, 12))
+        Tooltip(
+            cb_action,
+            "'analyze' creates a mask and runs morphometry. "
+            "'save' only saves the TEM image and generated mask for refinement.",
+        )
+
+        tk.Label(auto_opts, text="ADS Python:", bg=CARD_BG, fg=LBL_FG).pack(
+            side="left", padx=(0, 4))
+        self._ads_python_var = tk.StringVar(value=os.environ.get("AXONDEEPSEG_PYTHON", ""))
+        ads_python_entry = ttk.Entry(auto_opts, textvariable=self._ads_python_var, width=28)
+        ads_python_entry.pack(side="left")
+        Tooltip(
+            ads_python_entry,
+            "Optional Python executable for an environment with AxonDeepSeg installed. "
+            "Leave blank to use the Python running this GUI.",
+        )
+
+        self._auto_info_var = tk.StringVar(value=MITOCHONDRIA_NOTE)
+        tk.Label(self._auto_frame, textvariable=self._auto_info_var,
+                 bg=CARD_BG, fg="#888888",
+                 font=("TkDefaultFont", 8),
+                 anchor="w", justify="left").grid(
+            row=2, column=0, columnspan=3, sticky="ew", pady=(2, 0))
+
+        # Grid all content frames into row=1; hide non-default frames.
         self._single_frame.grid(row=1, column=0, columnspan=3, sticky="ew")
         self._batch_frame.grid(row=1, column=0, columnspan=3, sticky="ew")
+        self._auto_frame.grid(row=1, column=0, columnspan=3, sticky="ew")
         self._batch_frame.grid_remove()
+        self._auto_frame.grid_remove()
 
     # ------------------------------------------------------------------ mode toggle
     def _toggle_mode(self):
-        if self._batch_mode_var.get() == "batch":
+        selected = self._batch_mode_var.get()
+        if selected == "batch":
             self._single_frame.grid_remove()
+            self._auto_frame.grid_remove()
             self._batch_frame.grid()
+            self._plot_btn.configure(state="disabled")
+        elif selected == "auto":
+            self._single_frame.grid_remove()
+            self._batch_frame.grid_remove()
+            self._auto_frame.grid()
             self._plot_btn.configure(state="disabled")
         else:
             self._batch_frame.grid_remove()
+            self._auto_frame.grid_remove()
             self._single_frame.grid()
 
     # ------------------------------------------------------------------ param card
@@ -731,9 +826,20 @@ class NerveApp(tk.Tk):
             "assign_detached_myelin": "nearest" if self._assign_myelin_var.get() else "none",
         }
 
+    def _read_auto_params(self) -> dict:
+        """Read AxonDeepSeg GUI fields into a dict."""
+        ads_python = self._ads_python_var.get().strip()
+        return {
+            "model_name": self._ads_model_var.get(),
+            "action": self._auto_action_var.get(),
+            "ads_python": ads_python or None,
+        }
+
     # ------------------------------------------------------------------ run
     def _on_run(self):
-        if self._batch_mode_var.get() == "batch":
+        input_mode = self._batch_mode_var.get()
+
+        if input_mode == "batch":
             if not self._folder_path:
                 messagebox.showwarning("No folder", "Please select a folder first.")
                 return
@@ -744,6 +850,10 @@ class NerveApp(tk.Tk):
                     "Files must contain 'axon'/'tem' or 'mask' in their names.",
                 )
                 return
+        elif input_mode == "auto":
+            if not self._tem_path:
+                messagebox.showwarning("No TEM image", "Please select an unlabeled TEM image first.")
+                return
         else:
             if not self._mask_path:
                 messagebox.showwarning("No mask", "Please select a mask image first.")
@@ -751,17 +861,33 @@ class NerveApp(tk.Tk):
 
         try:
             params = self._read_params()
+            auto_params = self._read_auto_params() if input_mode == "auto" else {}
         except ValueError as e:
             messagebox.showerror("Bad parameter", f"Invalid parameter value:\n{e}")
             return
 
+        if input_mode == "auto":
+            if auto_params["action"] == "save":
+                output_dir = filedialog.askdirectory(
+                    title="Select folder for auto-segmented TEM + mask"
+                )
+                if not output_dir:
+                    return
+            else:
+                output_dir = str(Path(self._tem_path).parent)
+            auto_params["output_dir"] = output_dir
+
         self._run_btn.configure(state="disabled", bg="#6CAED8")
-        self._status_var.set("Running…")
+        self._status_var.set("Auto-segmenting..." if input_mode == "auto" else "Running...")
         self.update_idletasks()
 
-        if self._batch_mode_var.get() == "batch":
+        if input_mode == "batch":
             threading.Thread(
                 target=self._run_batch_analysis, args=(params,), daemon=True
+            ).start()
+        elif input_mode == "auto":
+            threading.Thread(
+                target=self._run_auto_segmentation, args=(params, auto_params), daemon=True
             ).start()
         else:
             threading.Thread(
@@ -796,6 +922,76 @@ class NerveApp(tk.Tk):
         except Exception:
             tb = traceback.format_exc()
             self.after(0, lambda: self._analysis_error(tb))
+
+    def _run_auto_segmentation(self, params: dict, auto_params: dict):
+        try:
+            import tifffile as tiff
+
+            result = auto_segment_tem(
+                tem_path=self._tem_path,
+                output_dir=auto_params["output_dir"],
+                model_name=auto_params["model_name"],
+                ads_python=auto_params["ads_python"],
+                myelin_val=params["myelin_val"],
+                axoplasm_val=params["axoplasm_val"],
+            )
+
+            self._auto_mask_path = str(result.mask_path)
+            self._mask_path = str(result.mask_path)
+            self._mask_array = tiff.imread(result.mask_path)
+            self._tem_array = tiff.imread(self._tem_path)
+
+            if auto_params["action"] == "save":
+                self._df_axons = pd.DataFrame()
+                self._df_image = pd.DataFrame()
+                self._labels_ws = None
+                self._resolved_mode = None
+                self.after(0, lambda: self._auto_save_done(result))
+                return
+
+            self.after(0, lambda: self._status_var.set("Measuring auto-segmented mask..."))
+
+            df_axons, df_image, labels_ws, resolved_mode = measure_image(
+                tem=self._tem_array,
+                mask=self._mask_array,
+                **params,
+            )
+
+            self._df_axons = df_axons
+            self._df_image = df_image
+            self._labels_ws = labels_ws
+            self._resolved_mode = resolved_mode
+
+            self.after(0, lambda: self._auto_analysis_done(result))
+
+        except Exception:
+            tb = traceback.format_exc()
+            self.after(0, lambda: self._analysis_error(tb))
+
+    def _auto_analysis_done(self, result):
+        self._mask_var.set(Path(result.mask_path).name)
+        self._update_mask_info(str(result.mask_path))
+        self._analysis_done()
+        messagebox.showinfo(
+            "Automatic segmentation",
+            f"Mask saved to:\n{result.mask_path}\n\n{MITOCHONDRIA_NOTE}",
+        )
+
+    def _auto_save_done(self, result):
+        self._status_var.set(f"Auto segmentation saved  [{result.model_name}]")
+        self._run_btn.configure(state="normal", bg=BTN_PRIMARY)
+        self._export_btn.configure(state="disabled")
+        self._plot_btn.configure(state="disabled")
+        self._mask_var.set(Path(result.mask_path).name)
+        self._update_mask_info(str(result.mask_path))
+        self._populate_table(self._axon_tree, pd.DataFrame())
+        self._populate_table(self._summary_tree, pd.DataFrame())
+        messagebox.showinfo(
+            "Automatic segmentation saved",
+            f"TEM image:\n{result.image_path}\n\n"
+            f"Mask:\n{result.mask_path}\n\n"
+            f"{MITOCHONDRIA_NOTE}",
+        )
 
     def _analysis_done(self):
         n        = len(self._df_axons) if self._df_axons is not None else 0

@@ -1,0 +1,6 @@
+# Full TEMptation environment with optional AxonDeepSeg auto-segmentation.
+# This keeps the lightweight requirements.txt path available for users who
+# already have pixel-labeled masks.
+
+-r requirements.txt
+AxonDeepSeg @ git+https://github.com/axondeepseg/axondeepseg.git
