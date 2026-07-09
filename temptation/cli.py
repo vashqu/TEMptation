@@ -78,6 +78,14 @@ def build_parser() -> argparse.ArgumentParser:
         "--assign-detached-myelin", choices=["none", "nearest"], default="none",
         help="Assign detached myelin pixels to the nearest axon for myelin metric computation.",
     )
+    p.add_argument(
+        "--mito-hole-handling", choices=["fill", "legacy"], default="fill",
+        help="'fill' (default) correctly attributes a full mitochondrion to its "
+             "axon by connectivity; 'legacy' reproduces the pre-fix behavior "
+             "that only captured a ~1px rim of each mitochondrion (see "
+             "IMPLEMENTATION_BLUEPRINT.md Sec 0, defect F1) -- use 'legacy' "
+             "only to reproduce numbers from before this fix.",
+    )
     p.add_argument("--output-dir", type=Path, default=None)
     p.add_argument("--plot", action="store_true")
 
@@ -125,6 +133,7 @@ def process_pair(
         watershed_compactness=args.watershed_compactness,
         watershed_beta=args.watershed_beta,
         assign_detached_myelin=args.assign_detached_myelin,
+        mito_hole_handling=args.mito_hole_handling,
     )
 
     print(f"  [{resolved_mode.upper()}] id={image_id!r}  "
@@ -148,7 +157,7 @@ def process_pair(
             df["image_path"] = str(tem_path)
             df["mask_path"] = str(mask_path)
             df["pixel_size_um"] = pixel_length_um
-            df["schema_version"] = schema.SCHEMA_VERSION
+            df["schema_version"] = schema.resolve_schema_version(args.mito_hole_handling)
 
     if args.plot and not df_axons.empty:
         plot_path = output_dir / f"overlay_{image_id}.png"

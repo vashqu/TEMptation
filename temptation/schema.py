@@ -4,7 +4,20 @@ axons a particular image happened to contain."""
 import numpy as np
 import pandas as pd
 
+# SCHEMA_VERSION is the baseline/legacy value (mito_hole_handling="legacy",
+# bug-for-bug identical to the pre-refactor tool). SCHEMA_VERSION_FILL
+# marks output produced with the Phase 2b fix active (mito_hole_handling=
+# "fill", the default from Phase 2b onward) -- see resolve_schema_version().
 SCHEMA_VERSION = "1.0"
+SCHEMA_VERSION_FILL = "2.0"
+
+
+def resolve_schema_version(mito_hole_handling: str) -> str:
+    """The schema_version column must reflect which mitochondrial-area
+    algorithm actually produced a given row's numbers, not a fixed
+    constant -- otherwise two runs with different --mito-hole-handling
+    values would be indistinguishable in the CSV itself."""
+    return SCHEMA_VERSION_FILL if mito_hole_handling == "fill" else SCHEMA_VERSION
 
 # Exact column order of legacy axons.csv, verified against a live run of
 # the pre-refactor CLI (see tests/golden/).

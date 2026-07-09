@@ -179,7 +179,19 @@ def analyze_image_legacy(
             summary["mean_myelin_thickness_um"] = np.nan
             summary["mean_mvf"] = np.nan
 
-        mito_outside = comps.mito & ~(comps.axon_only | comps.myelin)
+        # F2 (IMPLEMENTATION_BLUEPRINT.md Sec 0): the legacy computation
+        # compares mito against axon_only (raw, pre-hole-handling), which
+        # never overlaps mito by construction -- mito_outside_frac was
+        # therefore *always* exactly 1.0, regardless of mode. Preserved
+        # exactly under "legacy" for regression; under "fill" it correctly
+        # compares against the already-fixed axoplasm (which now includes
+        # every mitochondrion actually attributed to an axon), so the
+        # metric becomes meaningful again.
+        if seg_cfg.mito_hole_handling == "legacy":
+            mito_outside_reference = comps.axon_only
+        else:
+            mito_outside_reference = comps.axoplasm
+        mito_outside = comps.mito & ~(mito_outside_reference | comps.myelin)
         mito_outside_area_um2 = float(mito_outside.sum()) * px2
         total_mito_px = int(comps.mito.sum())
         mito_outside_frac = float(mito_outside.sum()) / max(total_mito_px, 1)

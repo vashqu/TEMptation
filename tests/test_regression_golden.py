@@ -5,7 +5,12 @@ identity metadata -- so a plain equality check on the full column set no
 longer applies; see IMPLEMENTATION_BLUEPRINT.md Sec 9, Phase 2 "Checks").
 If the legacy-subset comparison below fails, a value that used to be
 exported has silently changed -- that is not allowed outside the gated
-Phase 2b."""
+Phase 2b.
+
+Since Phase 2b, `--mito-hole-handling fill` is the CLI default (the F1
+fix), so these tests explicitly pass `--mito-hole-handling legacy` to
+keep testing the frozen pre-fix numbers. The corrected (fill/default)
+numbers have their own golden set -- see test_regression_golden_v2.py."""
 
 from pathlib import Path
 
@@ -18,8 +23,8 @@ GOLDEN = Path(__file__).parent / "golden"
 DATA_ROOT = Path(__file__).parent.parent.parent
 
 GROUP_ARGS = {
-    "normal": ["--folder", str(DATA_ROOT / "normal_data" / "162-165")],
-    "pathological": ["--folder", str(DATA_ROOT / "pathological_data")],
+    "normal": ["--folder", str(DATA_ROOT / "normal_data" / "162-165"), "--mito-hole-handling", "legacy"],
+    "pathological": ["--folder", str(DATA_ROOT / "pathological_data"), "--mito-hole-handling", "legacy"],
 }
 
 
