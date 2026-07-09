@@ -1,0 +1,199 @@
+"""CLI: argparse, batch workflow, main(). Verbatim behavior from the
+original measure_nerve.py -- Phase 1 adds no new flags."""
+
+import argparse
+import sys
+import traceback
+from pathlib import Path
+
+import pandas as pd
+import tifffile as tiff
+
+from . import discovery
+from . import export
+from . import plotting
+from .compat import measure_image
+
+
+def build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        description="Segment and measure nerve fibers from TEM + mask images.",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+
+    input_grp = p.add_argument_group("Input (use --folder OR --tem + --mask)")
+    input_grp.add_argument("--folder", type=Path, default=None)
+    input_grp.add_argument("--tem", type=Path, default=None)
+    input_grp.add_argument("--mask", type=Path, default=None)
+
+    scale_grp = p.add_argument_group("Scale (provide exactly one option)")
+    scale_ex = scale_grp.add_mutually_exclusive_group()
+    scale_ex.add_argument("--pixel-um", type=float, default=None)
+    scale_ex.add_argument("--bar", nargs=2, metavar=("PX", "UM"), type=float, default=None)
+
+    p.add_argument("--mode", choices=["normal", "pathological", "auto"], default="auto")
+    p.add_argument("--myelin-threshold", type=int, default=200)
+    p.add_argument("--myelin-val", type=int, default=64)
+    p.add_argument("--axoplasm-val", type=int, default=192)
+    p.add_argument("--mito-val", type=int, default=128)
+    p.add_argument("--smoothing-radius", type=int, default=1)
+    p.add_argument("--min-axon-area", type=int, default=200)
+    p.add_argument("--min-myelin-area", type=int, default=300)
+    p.add_argument("--watershed-mode", choices=["simple", "weighted"], default="weighted")
+    p.add_argument("--watershed-weight", choices=["radius", "area"], default="radius")
+    p.add_argument("--watershed-compactness", type=float, default=0.001)
+    p.add_argument(
+        "--watershed-beta", type=float, default=1.0,
+        help="Bias strength for weighted watershed; higher = larger axons claim more territory.",
+    )
+    p.add_argument(
+        "--assign-detached-myelin", choices=["none", "nearest"], default="none",
+        help="Assign detached myelin pixels to the nearest axon for myelin metric computation.",
+    )
+    p.add_argument("--output-dir", type=Path, default=None)
+    p.add_argument("--plot", action="store_true")
+
+    return p
+
+
+def resolve_pixel_length(args) -> float:
+    if args.pixel_um is not None:
+        return args.pixel_um
+    elif args.bar is not None:
+        bar_px, bar_um = args.bar
+        return bar_um / bar_px
+    else:
+        raise SystemExit(
+            "ERROR: You must provide either --pixel-um or --bar <PX> <UM> to set the scale."
+        )
+
+
+def process_pair(
+    image_id: str,
+    tem_path: Path,
+    mask_path: Path,
+    pixel_length_um: float,
+    args,
+    output_dir: Path,
+) -> tuple:
+    tem = tiff.imread(tem_path)
+    mask = tiff.imread(mask_path)
+
+    df_axons, df_image, labels_ws, resolved_mode = measure_image(
+        tem=tem,
+        mask=mask,
+        pixel_length_um=pixel_length_um,
+        myelin_val=args.myelin_val,
+        axoplasm_val=args.axoplasm_val,
+        mito_val=args.mito_val,
+        mode=args.mode,
+        myelin_threshold_px=args.myelin_threshold,
+        smoothing_radius_px=args.smoothing_radius,
+        min_axon_area_px=args.min_axon_area,
+        min_myelin_area_px=args.min_myelin_area,
+        watershed_mode=args.watershed_mode,
+        watershed_weight=args.watershed_weight,
+        watershed_compactness=args.watershed_compactness,
+        watershed_beta=args.watershed_beta,
+        assign_detached_myelin=args.assign_detached_myelin,
+    )
+
+    print(f"  [{resolved_mode.upper()}] id={image_id!r}  "
+          f"→ {len(df_axons)} axons detected")
+
+    for df in (df_axons, df_image):
+        if not df.empty:
+            if "image_id" not in df.columns:
+                df.insert(0, "image_id", image_id)
+            else:
+                df["image_id"] = image_id
+            if "mode" not in df.columns:
+                df.insert(1, "mode", resolved_mode)
+            else:
+                df["mode"] = resolved_mode
+
+    if args.plot and not df_axons.empty:
+        plot_path = output_dir / f"overlay_{image_id}.png"
+        try:
+            fig = plotting.overlay_figure(
+                tem=tem,
+                mask=mask,
+                labels_ws=labels_ws,
+                df_axons=df_axons,
+                myelin_val=args.myelin_val,
+                axoplasm_val=args.axoplasm_val,
+                mito_val=args.mito_val,
+                title=f"Image {image_id}  [{resolved_mode}]",
+            )
+            plotting.save_overlay(fig, plot_path)
+            plotting.show_overlay_nonblocking(fig)
+        except Exception as plot_exc:
+            print(f"  [WARNING] Plot failed for id={image_id!r}: {plot_exc}")
+            traceback.print_exc()
+
+    return df_axons, df_image
+
+
+def main():
+    parser = build_parser()
+    args = parser.parse_args()
+
+    if args.folder is not None:
+        if args.tem is not None or args.mask is not None:
+            parser.error("Use either --folder OR (--tem + --mask), not both.")
+        if not args.folder.is_dir():
+            parser.error(f"--folder {args.folder!r} is not a directory.")
+        pairs = discovery.find_pairs(args.folder)
+        if not pairs:
+            sys.exit(f"ERROR: No valid TEM+mask pairs found in {args.folder}")
+        output_dir = args.output_dir or args.folder
+    else:
+        if args.tem is None or args.mask is None:
+            parser.error("Provide --folder OR both --tem and --mask.")
+        if not args.tem.is_file():
+            parser.error(f"--tem file not found: {args.tem}")
+        if not args.mask.is_file():
+            parser.error(f"--mask file not found: {args.mask}")
+        pairs = [{"id": args.tem.stem, "tem_path": args.tem, "mask_path": args.mask}]
+        output_dir = args.output_dir or args.tem.parent
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    pixel_length_um = resolve_pixel_length(args)
+    print(f"Pixel length: {pixel_length_um:.6f} µm/px")
+
+    all_axons = []
+    all_images = []
+
+    for pair in pairs:
+        try:
+            df_axons, df_image = process_pair(
+                image_id=pair["id"],
+                tem_path=pair["tem_path"],
+                mask_path=pair["mask_path"],
+                pixel_length_um=pixel_length_um,
+                args=args,
+                output_dir=output_dir,
+            )
+            if not df_axons.empty:
+                all_axons.append(df_axons)
+            if not df_image.empty:
+                all_images.append(df_image)
+        except Exception as exc:
+            print(f"\n[ERROR] id={pair['id']!r} failed with: {exc}")
+            traceback.print_exc()
+            print()
+
+    if all_axons:
+        df_all_axons = pd.concat(all_axons, ignore_index=True)
+        axon_csv = export.write_axon_csv(df_all_axons, output_dir)
+        print(f"\nAxon-level results  → {axon_csv}  ({len(df_all_axons)} rows)")
+    else:
+        print("\nNo axons detected across all images.")
+        df_all_axons = pd.DataFrame()
+
+    if all_images:
+        df_all_images = pd.concat(all_images, ignore_index=True)
+        img_csv = export.write_image_csv(df_all_images, output_dir)
+        print(f"Image-level summary → {img_csv}  ({len(df_all_images)} rows)")
+
+    return df_all_axons

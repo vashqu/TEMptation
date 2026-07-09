@@ -909,105 +909,19 @@ class NerveApp(tk.Tk):
         try:
             import matplotlib
             matplotlib.use("TkAgg")
-            import matplotlib.pyplot as plt
-            from scipy import ndimage as ndi
-            from skimage.morphology import binary_dilation, disk
-            from skimage import measure as sk_measure
-            from matplotlib.patches import Patch
-            from matplotlib.lines import Line2D
+            from temptation import plotting
 
-            tem       = self._tem_array
-            mask      = self._mask_array
-            labels_ws = self._labels_ws
-            df_axons  = self._df_axons
-
-            myelin_val   = params.get("myelin_val",   64)
-            axoplasm_val = params.get("axoplasm_val", 192)
-            mito_val     = params.get("mito_val",     128)
-
-            MYELIN_RGBA   = np.array([0.27, 0.51, 0.71, 0.45], dtype=np.float32)
-            AXOPLASM_RGBA = np.array([1.00, 0.60, 0.10, 0.50], dtype=np.float32)
-            MITO_RGBA     = np.array([0.85, 0.15, 0.15, 0.80], dtype=np.float32)
-
-            fig, axes = plt.subplots(1, 2, figsize=(16, 7))
-            fig.suptitle(f"Nerve Fiber Analysis  [{self._resolved_mode}]", fontsize=13)
-
-            # Build 2-D arrays for pixel-hover info (format_coord)
-            _mask_2d = mask if mask.ndim == 2 else mask[..., 0]
-            _tem_2d  = tem  if tem.ndim  == 2 else tem[..., 0]
-            _h, _w   = _mask_2d.shape
-
-            def _make_fmt(include_tem: bool):
-                def _fmt(x, y):
-                    ix, iy = int(round(x)), int(round(y))
-                    if 0 <= iy < _h and 0 <= ix < _w:
-                        mv  = int(_mask_2d[iy, ix])
-                        msg = f"x={ix}  y={iy}  mask={mv}"
-                        if include_tem:
-                            tv  = int(_tem_2d[iy, ix])
-                            msg += f"  tem={tv}"
-                        return msg
-                    return f"x={x:.0f}  y={y:.0f}"
-                return _fmt
-
-            axes[0].imshow(tem, cmap="gray", interpolation="nearest")
-            axes[0].format_coord = _make_fmt(include_tem=True)
-            axes[0].set_title("TEM image")
-            axes[0].axis("off")
-
-            axes[1].imshow(tem, cmap="gray", interpolation="nearest")
-            axes[1].format_coord = _make_fmt(include_tem=True)
-
-            overlay = np.zeros((*labels_ws.shape, 4), dtype=np.float32)
-            # Tissue overlays based solely on raw mask values, NOT restricted by
-            # watershed labels_ws.  labels_ws is used only for contours and axon IDs.
-            axon_only     = (mask == axoplasm_val)
-            mito_raw      = (mask == mito_val)
-            axon_dil      = binary_dilation(axon_only, disk(1))
-            mito_in_axon  = mito_raw & axon_dil
-            axoplasm_full = axon_only | mito_in_axon
-
-            myelin_mask   = (mask == myelin_val)
-            axoplasm_mask = axoplasm_full.copy()
-            mito_mask     = ndi.binary_fill_holes(mito_raw)
-            axoplasm_mask = axoplasm_mask & ~mito_mask
-
-            overlay[myelin_mask]   = MYELIN_RGBA
-            overlay[axoplasm_mask] = AXOPLASM_RGBA
-            overlay[mito_mask]     = MITO_RGBA
-            axes[1].imshow(overlay, interpolation="nearest")
-
-            unique_labels = np.unique(labels_ws)
-            unique_labels = unique_labels[unique_labels > 0]
-            for lbl in unique_labels:
-                fiber_bin = (labels_ws == lbl).astype(np.uint8)
-                contours  = sk_measure.find_contours(fiber_bin, level=0.5)
-                for contour in contours:
-                    axes[1].plot(contour[:, 1], contour[:, 0],
-                                 color="white", linewidth=0.8, alpha=0.9)
-
-            if not df_axons.empty:
-                for _, row in df_axons.iterrows():
-                    axes[1].text(
-                        row["centroid_x_px"], row["centroid_y_px"],
-                        str(int(row["axon_id"])),
-                        color="white", fontsize=6, ha="center", va="center",
-                        fontweight="bold",
-                        bbox=dict(boxstyle="round,pad=0.15", fc="black", alpha=0.45, lw=0),
-                    )
-
-            legend_elements = [
-                Patch(facecolor=MYELIN_RGBA[:3],   alpha=0.8, label="Myelin"),
-                Patch(facecolor=AXOPLASM_RGBA[:3], alpha=0.8, label="Axoplasm"),
-                Patch(facecolor=MITO_RGBA[:3],     alpha=0.8, label="Mitochondria"),
-                Line2D([0], [0], color="white", linewidth=1.2, label="Fiber boundary"),
-            ]
-            axes[1].legend(handles=legend_elements, loc="lower right",
-                           fontsize=7, framealpha=0.6)
-            axes[1].set_title("Overlay + axon IDs")
-            axes[1].axis("off")
-            plt.tight_layout()
-            plt.show(block=True)
+            fig = plotting.overlay_figure(
+                tem=self._tem_array,
+                mask=self._mask_array,
+                labels_ws=self._labels_ws,
+                df_axons=self._df_axons,
+                myelin_val=params.get("myelin_val", 64),
+                axoplasm_val=params.get("axoplasm_val", 192),
+                mito_val=params.get("mito_val", 128),
+                title=f"Nerve Fiber Analysis  [{self._resolved_mode}]",
+            )
+            plotting.show_overlay_blocking(fig)
 
         except Exception:
             tb = traceback.format_exc()
