@@ -32,12 +32,20 @@ class SegmentationConfig:
 
     assign_detached_myelin: str = "none"          # "none" | "nearest"
 
-    # Phase 2b (gated): "legacy" reproduces the pre-fix mitochondrial-rim
-    # bug (F1) exactly; "fill" is not implemented until Phase 2b lands.
-    mito_hole_handling: str = "legacy"
+    # "fill" (default, Phase 2b fix) correctly attributes a full
+    # mitochondrion to its axon by connectivity. "legacy" reproduces the
+    # pre-fix mitochondrial-rim bug (F1) exactly, for regression testing
+    # only -- CLI and compat.measure_image() both default to "fill" too,
+    # so this dataclass default must match or a bare SegmentationConfig()
+    # would silently reproduce the bug.
+    mito_hole_handling: str = "fill"
 
-    # Phase 3: mitochondria-to-axon assignment strategy.
-    mito_assignment: str = "legacy"
+    # "centroid" (default, Phase 3a fix) assigns each mitochondrion,
+    # labeled once globally, to exactly one axon -- fixes F8 (a
+    # mitochondrion straddling a watershed boundary was fragmented and
+    # double-counted by the legacy per-fiber-crop approach). "legacy"
+    # reproduces that crop-based approach exactly, for regression testing.
+    mito_assignment: str = "centroid"
 
 
 @dataclass(frozen=True)

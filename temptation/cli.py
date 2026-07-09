@@ -86,6 +86,16 @@ def build_parser() -> argparse.ArgumentParser:
              "IMPLEMENTATION_BLUEPRINT.md Sec 0, defect F1) -- use 'legacy' "
              "only to reproduce numbers from before this fix.",
     )
+    p.add_argument(
+        "--mito-assignment", choices=["centroid", "overlap", "legacy"], default="centroid",
+        help="How each mitochondrion is attributed to an axon. 'centroid' "
+             "(default) labels mitochondria once globally and assigns each to "
+             "the axon at its centroid; 'overlap' uses maximum pixel overlap "
+             "instead; 'legacy' reproduces the pre-fix per-fiber-crop "
+             "intersection, which fragments and double-counts any "
+             "mitochondrion straddling a watershed boundary (defect F8) -- "
+             "use 'legacy' only to reproduce numbers from before this fix.",
+    )
     p.add_argument("--output-dir", type=Path, default=None)
     p.add_argument("--plot", action="store_true")
 
@@ -134,6 +144,7 @@ def process_pair(
         watershed_beta=args.watershed_beta,
         assign_detached_myelin=args.assign_detached_myelin,
         mito_hole_handling=args.mito_hole_handling,
+        mito_assignment=args.mito_assignment,
     )
 
     print(f"  [{resolved_mode.upper()}] id={image_id!r}  "

@@ -8,9 +8,10 @@ exported has silently changed -- that is not allowed outside the gated
 Phase 2b.
 
 Since Phase 2b, `--mito-hole-handling fill` is the CLI default (the F1
-fix), so these tests explicitly pass `--mito-hole-handling legacy` to
-keep testing the frozen pre-fix numbers. The corrected (fill/default)
-numbers have their own golden set -- see test_regression_golden_v2.py."""
+fix), and since Phase 3a `--mito-assignment centroid` is also the default
+(the F8 fix) -- so these tests explicitly pin BOTH flags to "legacy" to
+keep testing the frozen pre-fix numbers. The corrected (default) numbers
+have their own golden set -- see test_regression_golden_v2.py."""
 
 from pathlib import Path
 
@@ -22,9 +23,11 @@ from temptation.cli import main as cli_main
 GOLDEN = Path(__file__).parent / "golden"
 DATA_ROOT = Path(__file__).parent.parent.parent
 
+_LEGACY_FLAGS = ["--mito-hole-handling", "legacy", "--mito-assignment", "legacy"]
+
 GROUP_ARGS = {
-    "normal": ["--folder", str(DATA_ROOT / "normal_data" / "162-165"), "--mito-hole-handling", "legacy"],
-    "pathological": ["--folder", str(DATA_ROOT / "pathological_data"), "--mito-hole-handling", "legacy"],
+    "normal": ["--folder", str(DATA_ROOT / "normal_data" / "162-165"), *_LEGACY_FLAGS],
+    "pathological": ["--folder", str(DATA_ROOT / "pathological_data"), *_LEGACY_FLAGS],
 }
 
 

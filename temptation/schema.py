@@ -61,6 +61,13 @@ NEW_AXON_SHAPE_COLUMNS = (
 
 AXON_COLUMNS_V2 = AXON_COLUMNS_LEGACY + NEW_AXON_SHAPE_COLUMNS
 
+# New in Phase 3a: diagnostics from segmentation.assign_mito_to_axons
+# (global mito-to-axon assignment, fixes F8). NaN when
+# mito_assignment="legacy" (no global assignment computed in that mode).
+NEW_IMAGE_MITO_ASSIGNMENT_COLUMNS = ("n_mito_assigned", "n_mito_unassigned")
+
+IMAGE_COLUMNS_V2 = IMAGE_COLUMNS_LEGACY + NEW_IMAGE_MITO_ASSIGNMENT_COLUMNS
+
 # Identity/metadata columns, appended (not prepended -- see note above) by
 # cli.py after pipeline.py returns, exactly like image_id/mode already are.
 IDENTITY_COLUMNS = ("group", "image_path", "mask_path", "pixel_size_um", "schema_version")

@@ -94,3 +94,60 @@ def nearest_axon_map(axon_lab: np.ndarray) -> np.ndarray:
     """Verbatim port of measure_nerve.py:215-219 (detached-myelin assignment map)."""
     _, nn_idx = ndi.distance_transform_edt(axon_lab == 0, return_indices=True)
     return axon_lab[nn_idx[0], nn_idx[1]]
+
+
+def assign_mito_to_axons(mito_in_axon: np.ndarray, labels_ws: np.ndarray, method: str = "centroid"):
+    """Label every mitochondrion in `mito_in_axon` once, globally, and
+    assign each one to exactly one watershed fiber (CLAUDE.md Sec 12.4,
+    IMPLEMENTATION_BLUEPRINT.md F8). This replaces the legacy per-fiber
+    crop-and-intersect approach, which double-counts (and fragments the
+    shape of) any mitochondrion straddling a watershed boundary between
+    two axons -- verified absent in the current dataset (0/1005
+    mitochondria straddle a boundary across all 99 masks) but not
+    guaranteed on other data.
+
+    method:
+      "centroid" (default) -- assign to the fiber at the mitochondrion's
+        centroid pixel. Preferred per CLAUDE.md Sec 12.4.
+      "overlap" -- assign to the fiber with maximum pixel overlap
+        (robust fallback for boundary cases where the centroid itself
+        might land just outside every fiber, e.g. in myelin).
+
+    Returns (mito_lab, assignment) where mito_lab is the global mito label
+    array (connectivity=2, matching the rest of the pipeline) and
+    assignment is {mito_label: fiber_label}; a mitochondrion with no
+    fiber assignment (centroid lands in myelin/background and overlap is
+    also zero) is omitted from `assignment`.
+    """
+    mito_lab = label(mito_in_axon, connectivity=2)
+    assignment = {}
+
+    for r in regionprops(mito_lab):
+        if method == "centroid":
+            cy, cx = r.centroid
+            iy, ix = int(round(cy)), int(round(cx))
+            fiber_label = int(labels_ws[iy, ix])
+            if fiber_label == 0:
+                # Centroid landed outside any fiber (e.g. an elongated or
+                # concave mitochondrion whose centroid falls in myelin) --
+                # fall back to max overlap for this component only.
+                fiber_label = _max_overlap_label(mito_lab, r.label, labels_ws)
+        elif method == "overlap":
+            fiber_label = _max_overlap_label(mito_lab, r.label, labels_ws)
+        else:
+            raise ValueError(f"Unknown mito_assignment method: {method!r}")
+
+        if fiber_label != 0:
+            assignment[r.label] = fiber_label
+
+    return mito_lab, assignment
+
+
+def _max_overlap_label(mito_lab: np.ndarray, mito_label: int, labels_ws: np.ndarray) -> int:
+    ys, xs = np.where(mito_lab == mito_label)
+    ws_here = labels_ws[ys, xs]
+    ws_here = ws_here[ws_here != 0]
+    if ws_here.size == 0:
+        return 0
+    values, counts = np.unique(ws_here, return_counts=True)
+    return int(values[np.argmax(counts)])

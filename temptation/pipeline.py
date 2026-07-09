@@ -12,7 +12,7 @@ from . import metrics_axon
 from . import metrics_mito
 from . import metrics_spatial
 from .config import SegmentationConfig
-from .schema import AXON_COLUMNS_V2, IMAGE_COLUMNS_LEGACY, conform
+from .schema import AXON_COLUMNS_V2, IMAGE_COLUMNS_V2, conform
 
 
 def analyze_image_legacy(
@@ -47,6 +47,23 @@ def analyze_image_legacy(
         nearest_axon_map_global = seg_mod.nearest_axon_map(axon_lab)
     else:
         nearest_axon_map_global = None
+
+    # Stage 4c: global mito-to-axon assignment (Phase 3a, fixes F8 --
+    # see segmentation.assign_mito_to_axons). "legacy" skips this and the
+    # per-axon loop below falls back to the original per-fiber-crop
+    # intersection instead.
+    n_mito_assigned = np.nan
+    n_mito_unassigned = np.nan
+    fiber_to_mito_regions = {}
+    if seg_cfg.mito_assignment != "legacy":
+        mito_lab_global, mito_assignment_map = seg_mod.assign_mito_to_axons(
+            comps.mito_in_axon, labels_ws, method=seg_cfg.mito_assignment,
+        )
+        mito_regions_by_label = {r.label: r for r in regionprops(mito_lab_global)}
+        for mito_label, fiber_label in mito_assignment_map.items():
+            fiber_to_mito_regions.setdefault(fiber_label, []).append(mito_regions_by_label[mito_label])
+        n_mito_assigned = len(mito_assignment_map)
+        n_mito_unassigned = int(mito_lab_global.max()) - n_mito_assigned
 
     # Stage 5: per-axon metric extraction.
     H, W = mask.shape[:2]
@@ -97,16 +114,24 @@ def analyze_image_legacy(
         cx_um = cx_global * pixel_length_um
         cy_um = cy_global * pixel_length_um
 
-        mito_crop = comps.mito[min_row:max_row, min_col:max_col]
-        mito_in_axon_crop = mito_crop & axon_mask_local
-
-        mito = metrics_mito.mito_metrics_for_axon(
-            mito_in_axon_crop=mito_in_axon_crop,
-            axon_area_um2=geom["axon_area_um2"],
-            cx_local=cx_local,
-            cy_local=cy_local,
-            pixel_length_um=pixel_length_um,
-        )
+        if seg_cfg.mito_assignment == "legacy":
+            mito_crop = comps.mito[min_row:max_row, min_col:max_col]
+            mito_in_axon_crop = mito_crop & axon_mask_local
+            mito = metrics_mito.mito_metrics_for_axon(
+                mito_in_axon_crop=mito_in_axon_crop,
+                axon_area_um2=geom["axon_area_um2"],
+                cx_local=cx_local,
+                cy_local=cy_local,
+                pixel_length_um=pixel_length_um,
+            )
+        else:
+            mito = metrics_mito.mito_metrics_from_regions(
+                mito_regions=fiber_to_mito_regions.get(fiber_id, []),
+                axon_area_um2=geom["axon_area_um2"],
+                axon_cx_px=cx_global,
+                axon_cy_px=cy_global,
+                pixel_length_um=pixel_length_um,
+            )
 
         rows.append({
             "axon_id": fiber_id,
@@ -207,6 +232,11 @@ def analyze_image_legacy(
         summary["myelin_area_fraction_of_fov"] = myelin_area_fraction_of_fov
         summary["myelin_component_count"] = myelin_component_count
 
+        # Phase 3a diagnostic: NaN under mito_assignment="legacy" (no
+        # global assignment is computed in that mode -- see Stage 4c).
+        summary["n_mito_assigned"] = n_mito_assigned
+        summary["n_mito_unassigned"] = n_mito_unassigned
+
         df_image = pd.DataFrame([summary])
     else:
         df_image = pd.DataFrame()
@@ -214,6 +244,6 @@ def analyze_image_legacy(
     if not df_axons.empty:
         df_axons = conform(df_axons, [c for c in AXON_COLUMNS_V2 if c not in ("image_id", "mode")])
     if not df_image.empty:
-        df_image = conform(df_image, [c for c in IMAGE_COLUMNS_LEGACY if c != "image_id"])
+        df_image = conform(df_image, [c for c in IMAGE_COLUMNS_V2 if c != "image_id"])
 
     return df_axons, df_image, labels_ws, resolved_mode

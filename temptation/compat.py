@@ -7,12 +7,13 @@ imports this name from measure_nerve) keeps working through Phases 1-6.
 Phase 7 rewrites the GUI to call temptation.pipeline directly and this
 module is removed.
 
-`mito_hole_handling` defaults to "fill" (the Phase 2b fix for F1) as of
+`mito_hole_handling` defaults to "fill" (the Phase 2b fix for F1) and
+`mito_assignment` defaults to "centroid" (the Phase 3a fix for F8) as of
 this phase -- deliberately, not just for the CLI. The GUI calls this same
-function with no --mito-hole-handling-equivalent widget yet (that lands in
-Phase 7's metric-selection panel), so leaving the default at "legacy"
-here would silently diverge CLI and GUI defaults. Pass
-mito_hole_handling="legacy" explicitly to reproduce pre-Phase-2b numbers.
+function with no equivalent widgets yet (those land in Phase 7's metric-
+selection panel), so leaving either default at its old value here would
+silently diverge CLI and GUI defaults. Pass mito_hole_handling="legacy"
+and/or mito_assignment="legacy" explicitly to reproduce pre-fix numbers.
 """
 
 import numpy as np
@@ -39,6 +40,7 @@ def measure_image(
     watershed_beta: float = 1.0,
     assign_detached_myelin: str = "none",
     mito_hole_handling: str = "fill",
+    mito_assignment: str = "centroid",
 ):
     seg_cfg = SegmentationConfig(
         myelin_val=myelin_val,
@@ -55,5 +57,6 @@ def measure_image(
         watershed_beta=watershed_beta,
         assign_detached_myelin=assign_detached_myelin,
         mito_hole_handling=mito_hole_handling,
+        mito_assignment=mito_assignment,
     )
     return analyze_image_legacy(tem, mask, pixel_length_um, seg_cfg)
