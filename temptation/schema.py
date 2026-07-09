@@ -31,6 +31,27 @@ IMAGE_COLUMNS_LEGACY = (
     "total_myelin_area_um2", "myelin_area_fraction_of_fov", "myelin_component_count",
 )
 
+# New in Phase 2 (unbiased shape metrics, see metrics_axon.shape_metrics
+# and IMPLEMENTATION_BLUEPRINT.md Sec 0 F5). Appended after the full
+# legacy block rather than interspersed, so the legacy 34 keep their exact
+# values *and* positions -- IMPLEMENTATION_BLUEPRINT.md Sec 5.2 describes
+# the identity block (group/image_path/mask_path/pixel_size_um/
+# schema_version) as *prepended*, which would shift every legacy column's
+# position; that reorder, plus the --schema {1.0,2.0} flag that makes it
+# opt-in, is deliberately deferred to Phase 6 ("CSV/export redesign").
+# Phase 2 stays strictly additive: nothing already exported moves.
+NEW_AXON_SHAPE_COLUMNS = (
+    "axon_circularity_crofton",
+    "axon_shape_irregularity",
+    "axon_shape_irregularity_crofton",
+)
+
+AXON_COLUMNS_V2 = AXON_COLUMNS_LEGACY + NEW_AXON_SHAPE_COLUMNS
+
+# Identity/metadata columns, appended (not prepended -- see note above) by
+# cli.py after pipeline.py returns, exactly like image_id/mode already are.
+IDENTITY_COLUMNS = ("group", "image_path", "mask_path", "pixel_size_um", "schema_version")
+
 
 def conform(df: pd.DataFrame, columns) -> pd.DataFrame:
     """Reindex df to exactly `columns`, filling any missing column with NaN."""

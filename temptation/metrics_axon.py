@@ -67,12 +67,24 @@ def axon_geometry(
 
 
 def shape_metrics(axon_props_local, axon_area_px: int, pixel_length_um: float) -> dict:
-    """perimeter, eccentricity, solidity, circularity, convexity.
+    """perimeter, eccentricity, solidity, circularity, convexity, and the
+    unbiased crofton-perimeter variants.
 
-    Verbatim port of measure_nerve.py:274-287. `axon_area_px` must be the
-    full local-crop axon area (axon_mask_local.sum()), not
-    axon_props_local.area -- these can differ when the crop has more than
-    one connected fragment, and the original code uses the crop sum.
+    Verbatim port of measure_nerve.py:274-287 for the legacy fields.
+    `axon_area_px` must be the full local-crop axon area
+    (axon_mask_local.sum()), not axon_props_local.area -- these can differ
+    when the crop has more than one connected fragment, and the original
+    code uses the crop sum.
+
+    New in Phase 2 (IMPLEMENTATION_BLUEPRINT.md Sec 0, F5):
+    `skimage.measure.perimeter` overestimates a digitized boundary's true
+    length, so the legacy `circularity` is size-dependent and caps around
+    0.90 even for a perfect disk (verified: 0.977 at r=10px, 0.905 at
+    r=160px). `perimeter_crofton` is a far less biased estimator (~1.00
+    across that same radius range). `axon_circularity_crofton` and
+    `axon_shape_irregularity_crofton` are added alongside -- not in place
+    of -- the legacy columns, which keep their original (biased) values so
+    existing QC thresholds calibrated against them remain valid.
     """
     perimeter_um = axon_props_local.perimeter * pixel_length_um
     eccentricity = axon_props_local.eccentricity
@@ -83,6 +95,20 @@ def shape_metrics(axon_props_local, axon_area_px: int, pixel_length_um: float) -
         circularity = (4.0 * np.pi * axon_area_px) / (axon_perim_px ** 2)
     else:
         circularity = np.nan
+    if np.isnan(circularity) or circularity == 0:
+        axon_shape_irregularity = np.nan
+    else:
+        axon_shape_irregularity = 1.0 / circularity
+
+    axon_perim_crofton_px = axon_props_local.perimeter_crofton
+    if axon_perim_crofton_px > 0:
+        axon_circularity_crofton = (4.0 * np.pi * axon_area_px) / (axon_perim_crofton_px ** 2)
+    else:
+        axon_circularity_crofton = np.nan
+    if np.isnan(axon_circularity_crofton) or axon_circularity_crofton == 0:
+        axon_shape_irregularity_crofton = np.nan
+    else:
+        axon_shape_irregularity_crofton = 1.0 / axon_circularity_crofton
 
     convexity = _convexity(axon_props_local)
 
@@ -92,4 +118,7 @@ def shape_metrics(axon_props_local, axon_area_px: int, pixel_length_um: float) -
         "solidity": solidity,
         "circularity": circularity,
         "convexity": convexity,
+        "axon_circularity_crofton": axon_circularity_crofton,
+        "axon_shape_irregularity": axon_shape_irregularity,
+        "axon_shape_irregularity_crofton": axon_shape_irregularity_crofton,
     }

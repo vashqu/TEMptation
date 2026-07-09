@@ -1,5 +1,7 @@
-"""CLI: argparse, batch workflow, main(). Verbatim behavior from the
-original measure_nerve.py -- Phase 1 adds no new flags."""
+"""CLI: argparse, batch workflow, main(). Phase 1 behavior (--folder /
+--tem+--mask) is untouched; Phase 2 adds --input-root/--groups/--group/
+--recursive for multi-group batch runs with group labels and metadata
+columns (IMPLEMENTATION_BLUEPRINT.md Sec 5.4/5.6, fixes F3/F7)."""
 
 import argparse
 import sys
@@ -7,11 +9,12 @@ import traceback
 from pathlib import Path
 
 import pandas as pd
-import tifffile as tiff
 
+from . import dataio
 from . import discovery
 from . import export
 from . import plotting
+from . import schema
 from .compat import measure_image
 
 
@@ -21,10 +24,35 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
 
-    input_grp = p.add_argument_group("Input (use --folder OR --tem + --mask)")
+    input_grp = p.add_argument_group(
+        "Input (use --folder OR --tem + --mask OR --groups)"
+    )
     input_grp.add_argument("--folder", type=Path, default=None)
     input_grp.add_argument("--tem", type=Path, default=None)
     input_grp.add_argument("--mask", type=Path, default=None)
+    input_grp.add_argument(
+        "--input-root", type=Path, default=None,
+        help="Root directory that --groups folder names are resolved relative to "
+             "(defaults to current directory).",
+    )
+    input_grp.add_argument(
+        "--groups", nargs="+", default=None, metavar="FOLDER:LABEL",
+        help="Batch-process multiple labeled groups in one run, e.g. "
+             "--groups normal_data:normal pathological_data:pathological. "
+             "Each folder is scanned recursively.",
+    )
+    input_grp.add_argument(
+        "--group", type=str, default=None,
+        help="Explicit group label to stamp on every row (used with --folder "
+             "or --tem/--mask; ignored with --groups, which assigns groups "
+             "per folder).",
+    )
+    input_grp.add_argument(
+        "--recursive", action="store_true",
+        help="With --folder, scan subdirectories too and use the extended "
+             "glob (tif/tiff/png/gif) instead of the default non-recursive "
+             "tif/tiff-only scan.",
+    )
 
     scale_grp = p.add_argument_group("Scale (provide exactly one option)")
     scale_ex = scale_grp.add_mutually_exclusive_group()
@@ -75,9 +103,10 @@ def process_pair(
     pixel_length_um: float,
     args,
     output_dir: Path,
+    group: str = None,
 ) -> tuple:
-    tem = tiff.imread(tem_path)
-    mask = tiff.imread(mask_path)
+    tem = dataio.read_image(tem_path)
+    mask = dataio.read_mask(mask_path)
 
     df_axons, df_image, labels_ws, resolved_mode = measure_image(
         tem=tem,
@@ -111,6 +140,15 @@ def process_pair(
                 df.insert(1, "mode", resolved_mode)
             else:
                 df["mode"] = resolved_mode
+            # Identity/metadata columns (Phase 2). Appended, not inserted,
+            # so the legacy column positions above are undisturbed -- see
+            # schema.py's note on why the full identity-block-prepend
+            # redesign is deferred to Phase 6.
+            df["group"] = group
+            df["image_path"] = str(tem_path)
+            df["mask_path"] = str(mask_path)
+            df["pixel_size_um"] = pixel_length_um
+            df["schema_version"] = schema.SCHEMA_VERSION
 
     if args.plot and not df_axons.empty:
         plot_path = output_dir / f"overlay_{image_id}.png"
@@ -138,28 +176,56 @@ def main():
     parser = build_parser()
     args = parser.parse_args()
 
-    if args.folder is not None:
+    skipped_files = []
+
+    if args.groups is not None:
+        if args.folder is not None or args.tem is not None or args.mask is not None:
+            parser.error("Use --groups OR --folder OR (--tem + --mask), not together.")
+        if args.group is not None:
+            parser.error(
+                "--group is ignored with --groups (each folder in --groups "
+                "already carries its own label); remove one of the two."
+            )
+        group_map = discovery.parse_group_map(args.groups)
+        input_root = args.input_root or Path(".")
+        if not input_root.is_dir():
+            parser.error(f"--input-root {input_root!r} is not a directory.")
+        pairs, skipped_files = discovery.find_groups(input_root, group_map)
+        if not pairs:
+            sys.exit(f"ERROR: No valid TEM+mask pairs found under {input_root!r} for groups {group_map}")
+        output_dir = args.output_dir or input_root
+    elif args.folder is not None:
         if args.tem is not None or args.mask is not None:
             parser.error("Use either --folder OR (--tem + --mask), not both.")
         if not args.folder.is_dir():
             parser.error(f"--folder {args.folder!r} is not a directory.")
-        pairs = discovery.find_pairs(args.folder)
+        if args.recursive:
+            pairs, skipped_files = discovery._scan_folder_recursive(args.folder)
+        else:
+            pairs = discovery.find_pairs(args.folder)
         if not pairs:
             sys.exit(f"ERROR: No valid TEM+mask pairs found in {args.folder}")
+        for pair in pairs:
+            pair.setdefault("group", args.group)
         output_dir = args.output_dir or args.folder
     else:
         if args.tem is None or args.mask is None:
-            parser.error("Provide --folder OR both --tem and --mask.")
+            parser.error("Provide --folder OR both --tem and --mask OR --groups.")
         if not args.tem.is_file():
             parser.error(f"--tem file not found: {args.tem}")
         if not args.mask.is_file():
             parser.error(f"--mask file not found: {args.mask}")
-        pairs = [{"id": args.tem.stem, "tem_path": args.tem, "mask_path": args.mask}]
+        pairs = [{"id": args.tem.stem, "tem_path": args.tem, "mask_path": args.mask, "group": args.group}]
         output_dir = args.output_dir or args.tem.parent
 
     output_dir.mkdir(parents=True, exist_ok=True)
     pixel_length_um = resolve_pixel_length(args)
     print(f"Pixel length: {pixel_length_um:.6f} µm/px")
+
+    if skipped_files:
+        print(f"\n[WARNING] {len(skipped_files)} file(s) skipped during discovery:")
+        for s in skipped_files:
+            print(f"  SKIP: {s.path}  ({s.reason})")
 
     all_axons = []
     all_images = []
@@ -173,6 +239,7 @@ def main():
                 pixel_length_um=pixel_length_um,
                 args=args,
                 output_dir=output_dir,
+                group=pair.get("group"),
             )
             if not df_axons.empty:
                 all_axons.append(df_axons)

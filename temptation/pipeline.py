@@ -12,7 +12,7 @@ from . import metrics_axon
 from . import metrics_mito
 from . import metrics_spatial
 from .config import SegmentationConfig
-from .schema import AXON_COLUMNS_LEGACY, IMAGE_COLUMNS_LEGACY, conform
+from .schema import AXON_COLUMNS_V2, IMAGE_COLUMNS_LEGACY, conform
 
 
 def analyze_image_legacy(
@@ -140,6 +140,9 @@ def analyze_image_legacy(
             "mito_area_skewness": mito["mito_area_skewness"],
             "mito_mean_dist_centroid_um": mito["mito_mean_dist_centroid_um"],
             "mito_std_dist_centroid_um": mito["mito_std_dist_centroid_um"],
+            "axon_circularity_crofton": shape["axon_circularity_crofton"],
+            "axon_shape_irregularity": shape["axon_shape_irregularity"],
+            "axon_shape_irregularity_crofton": shape["axon_shape_irregularity_crofton"],
         })
 
     df_axons = pd.DataFrame(rows)
@@ -197,7 +200,7 @@ def analyze_image_legacy(
         df_image = pd.DataFrame()
 
     if not df_axons.empty:
-        df_axons = conform(df_axons, [c for c in AXON_COLUMNS_LEGACY if c not in ("image_id", "mode")])
+        df_axons = conform(df_axons, [c for c in AXON_COLUMNS_V2 if c not in ("image_id", "mode")])
     if not df_image.empty:
         df_image = conform(df_image, [c for c in IMAGE_COLUMNS_LEGACY if c != "image_id"])
 

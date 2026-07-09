@@ -1,7 +1,11 @@
-"""Phase 1 acceptance test: the refactored package must reproduce the
-pre-refactor golden CSVs exactly. If this test fails, a code move was not
-verbatim -- revert and redo it smaller (see IMPLEMENTATION_BLUEPRINT.md
-Sec 9, Phase 1)."""
+"""Acceptance test: the refactored/extended package must still reproduce
+the pre-refactor golden CSVs on the *legacy* columns exactly (Phase 2 adds
+new columns -- axon shape metrics, group/path/pixel_size/schema_version
+identity metadata -- so a plain equality check on the full column set no
+longer applies; see IMPLEMENTATION_BLUEPRINT.md Sec 9, Phase 2 "Checks").
+If the legacy-subset comparison below fails, a value that used to be
+exported has silently changed -- that is not allowed outside the gated
+Phase 2b."""
 
 from pathlib import Path
 
@@ -30,8 +34,10 @@ def test_axons_csv_matches_golden(group, tmp_path, monkeypatch):
     new = pd.read_csv(out_dir / "axons.csv")
     golden = pd.read_csv(GOLDEN / group / "axons.csv")
 
-    assert list(new.columns) == list(golden.columns)
-    pd.testing.assert_frame_equal(new, golden, check_exact=False, rtol=1e-12)
+    assert set(golden.columns).issubset(set(new.columns)), (
+        f"missing legacy columns: {set(golden.columns) - set(new.columns)}"
+    )
+    pd.testing.assert_frame_equal(new[golden.columns], golden, check_exact=False, rtol=1e-12)
 
 
 @pytest.mark.parametrize("group", ["normal", "pathological"])
@@ -45,8 +51,10 @@ def test_image_summary_csv_matches_golden(group, tmp_path, monkeypatch):
     new = pd.read_csv(out_dir / "image_summary.csv")
     golden = pd.read_csv(GOLDEN / group / "image_summary.csv")
 
-    assert list(new.columns) == list(golden.columns)
-    pd.testing.assert_frame_equal(new, golden, check_exact=False, rtol=1e-12)
+    assert set(golden.columns).issubset(set(new.columns)), (
+        f"missing legacy columns: {set(golden.columns) - set(new.columns)}"
+    )
+    pd.testing.assert_frame_equal(new[golden.columns], golden, check_exact=False, rtol=1e-12)
 
 
 @pytest.mark.parametrize("group,n_axon_rows,n_image_rows", [
