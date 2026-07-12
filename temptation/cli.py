@@ -13,9 +13,10 @@ import pandas as pd
 from . import dataio
 from . import discovery
 from . import export
+from . import pipeline
 from . import plotting
 from . import schema
-from .compat import measure_image
+from .config import SegmentationConfig
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -98,6 +99,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--output-dir", type=Path, default=None)
     p.add_argument("--plot", action="store_true")
+    p.add_argument(
+        "--write-mito-csv", action="store_true",
+        help="Also write mitochondria_metrics.csv (one row per real mitochondrion). "
+             "Requires --mito-assignment centroid or overlap; ignored (with a warning) "
+             "under --mito-assignment legacy, since a per-fiber-crop mitochondrion "
+             "fragment is not a real, whole mitochondrion.",
+    )
 
     return p
 
@@ -126,10 +134,7 @@ def process_pair(
     tem = dataio.read_image(tem_path)
     mask = dataio.read_mask(mask_path)
 
-    df_axons, df_image, labels_ws, resolved_mode = measure_image(
-        tem=tem,
-        mask=mask,
-        pixel_length_um=pixel_length_um,
+    seg_cfg = SegmentationConfig(
         myelin_val=args.myelin_val,
         axoplasm_val=args.axoplasm_val,
         mito_val=args.mito_val,
@@ -145,6 +150,9 @@ def process_pair(
         assign_detached_myelin=args.assign_detached_myelin,
         mito_hole_handling=args.mito_hole_handling,
         mito_assignment=args.mito_assignment,
+    )
+    df_axons, df_image, labels_ws, resolved_mode, df_mito = pipeline.analyze_image_legacy(
+        tem, mask, pixel_length_um, seg_cfg,
     )
 
     print(f"  [{resolved_mode.upper()}] id={image_id!r}  "
@@ -170,6 +178,15 @@ def process_pair(
             df["pixel_size_um"] = pixel_length_um
             df["schema_version"] = schema.resolve_schema_version(args.mito_hole_handling)
 
+    if getattr(args, "write_mito_csv", False):
+        if not df_mito.empty:
+            df_mito.insert(0, "image_id", image_id)
+            df_mito["group"] = group
+        elif args.mito_assignment == "legacy":
+            print(f"  [WARNING] --write-mito-csv has no effect under "
+                  f"--mito-assignment legacy for id={image_id!r} "
+                  f"(no per-mitochondrion table in that mode).")
+
     if args.plot and not df_axons.empty:
         plot_path = output_dir / f"overlay_{image_id}.png"
         try:
@@ -189,7 +206,7 @@ def process_pair(
             print(f"  [WARNING] Plot failed for id={image_id!r}: {plot_exc}")
             traceback.print_exc()
 
-    return df_axons, df_image
+    return df_axons, df_image, df_mito
 
 
 def main():
@@ -249,10 +266,11 @@ def main():
 
     all_axons = []
     all_images = []
+    all_mito = []
 
     for pair in pairs:
         try:
-            df_axons, df_image = process_pair(
+            df_axons, df_image, df_mito = process_pair(
                 image_id=pair["id"],
                 tem_path=pair["tem_path"],
                 mask_path=pair["mask_path"],
@@ -265,6 +283,8 @@ def main():
                 all_axons.append(df_axons)
             if not df_image.empty:
                 all_images.append(df_image)
+            if not df_mito.empty:
+                all_mito.append(df_mito)
         except Exception as exc:
             print(f"\n[ERROR] id={pair['id']!r} failed with: {exc}")
             traceback.print_exc()
@@ -282,5 +302,13 @@ def main():
         df_all_images = pd.concat(all_images, ignore_index=True)
         img_csv = export.write_image_csv(df_all_images, output_dir)
         print(f"Image-level summary → {img_csv}  ({len(df_all_images)} rows)")
+
+    if args.write_mito_csv:
+        if all_mito:
+            df_all_mito = pd.concat(all_mito, ignore_index=True)
+            mito_csv = export.write_mito_csv(df_all_mito, output_dir)
+            print(f"Mitochondria results → {mito_csv}  ({len(df_all_mito)} rows)")
+        else:
+            print("No mitochondria to write (empty or --mito-assignment legacy).")
 
     return df_all_axons

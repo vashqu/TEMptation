@@ -16,3 +16,10 @@ def write_image_csv(df_images: pd.DataFrame, out_dir: Path) -> Path:
     path = Path(out_dir) / "image_summary.csv"
     df_images.to_csv(path, index=False)
     return path
+
+
+def write_mito_csv(df_mito: pd.DataFrame, out_dir: Path) -> Path:
+    """One row per real mitochondrion (Phase 3b, --write-mito-csv)."""
+    path = Path(out_dir) / "mitochondria_metrics.csv"
+    df_mito.to_csv(path, index=False)
+    return path

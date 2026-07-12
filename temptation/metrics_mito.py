@@ -18,6 +18,8 @@ import numpy as np
 from scipy.stats import skew as scipy_skew
 from skimage.measure import label, regionprops
 
+from .mathutils import safe_aspect_ratio, safe_divide
+
 
 def mito_metrics_for_axon(
     mito_in_axon_crop: np.ndarray,
@@ -228,4 +230,85 @@ def mito_metrics_from_regions(
         "mito_area_skewness": mito_area_skewness,
         "mito_mean_dist_centroid_um": mito_mean_dist_centroid_um,
         "mito_std_dist_centroid_um": mito_std_dist_centroid_um,
+    }
+
+
+def mito_burden_and_shape_metrics(
+    mito_regions: list,
+    axon_area_um2: float,
+    fiber_area_um2: float,
+    myelin_area_um2: float,
+    pixel_length_um: float,
+) -> dict:
+    """Phase 3b per-axon burden and shape metrics (occupancy, size
+    distribution, fragmentation, load relative to fiber/myelin, and
+    aspect-ratio/solidity/eccentricity aggregates).
+
+    Deliberately takes a raw `mito_regions` list rather than a mask or a
+    crop -- it doesn't care whether the regions came from the legacy
+    per-fiber-crop labeling or the Phase 3a global assignment, so the same
+    function serves both `mito_assignment` modes. New metrics use
+    ddof=1 (see mathutils.py), unlike the legacy std/cv columns above,
+    which use ddof=0.
+
+    Empty-mito contract (CLAUDE.md Sec 12.3): count=0 -> total area 0,
+    occupancy/load ratios 0 (well-defined: 0/positive-denominator),
+    fragmentation and all shape aggregates NaN (undefined, not 0/0).
+    """
+    px2 = pixel_length_um ** 2
+    mito_count = len(mito_regions)
+    areas_um2 = np.array([mr.area * px2 for mr in mito_regions], dtype=float)
+    mito_total_area_um2 = float(areas_um2.sum()) if mito_count > 0 else 0.0
+
+    mito_occupancy_ratio = safe_divide(mito_total_area_um2, axon_area_um2)
+    normalized_mito_load = safe_divide(mito_total_area_um2, fiber_area_um2)
+    mito_per_myelin = safe_divide(mito_total_area_um2, myelin_area_um2)
+    mito_fragmentation_index = (
+        safe_divide(mito_count, mito_total_area_um2) if mito_count > 0 else np.nan
+    )
+
+    if mito_count > 0:
+        mito_mean_area_um2 = float(np.mean(areas_um2))
+        mito_median_area_um2 = float(np.median(areas_um2))
+        q75, q25 = np.percentile(areas_um2, [75, 25])
+        mito_area_iqr = float(q75 - q25)
+
+        aspect_ratios = np.array([safe_aspect_ratio(mr) for mr in mito_regions], dtype=float)
+        solidities = np.array([mr.solidity for mr in mito_regions], dtype=float)
+        eccentricities = np.array([mr.eccentricity for mr in mito_regions], dtype=float)
+
+        with np.errstate(invalid="ignore"):
+            mito_mean_aspect_ratio = float(np.nanmean(aspect_ratios))
+            mito_std_aspect_ratio = (
+                float(np.nanstd(aspect_ratios, ddof=1)) if mito_count > 1 else np.nan
+            )
+            mito_mean_solidity = float(np.nanmean(solidities))
+            mito_std_solidity = (
+                float(np.nanstd(solidities, ddof=1)) if mito_count > 1 else np.nan
+            )
+            mito_mean_eccentricity = float(np.nanmean(eccentricities))
+    else:
+        mito_mean_area_um2 = np.nan
+        mito_median_area_um2 = np.nan
+        mito_area_iqr = np.nan
+        mito_mean_aspect_ratio = np.nan
+        mito_std_aspect_ratio = np.nan
+        mito_mean_solidity = np.nan
+        mito_std_solidity = np.nan
+        mito_mean_eccentricity = np.nan
+
+    return {
+        "mito_total_area_um2": mito_total_area_um2,
+        "mito_occupancy_ratio": mito_occupancy_ratio,
+        "mito_mean_area_um2": mito_mean_area_um2,
+        "mito_median_area_um2": mito_median_area_um2,
+        "mito_area_iqr": mito_area_iqr,
+        "mito_fragmentation_index": mito_fragmentation_index,
+        "normalized_mito_load": normalized_mito_load,
+        "mito_per_myelin": mito_per_myelin,
+        "mito_mean_aspect_ratio": mito_mean_aspect_ratio,
+        "mito_std_aspect_ratio": mito_std_aspect_ratio,
+        "mito_mean_solidity": mito_mean_solidity,
+        "mito_std_solidity": mito_std_solidity,
+        "mito_mean_eccentricity": mito_mean_eccentricity,
     }

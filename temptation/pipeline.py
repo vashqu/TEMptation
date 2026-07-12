@@ -12,7 +12,8 @@ from . import metrics_axon
 from . import metrics_mito
 from . import metrics_spatial
 from .config import SegmentationConfig
-from .schema import AXON_COLUMNS_V2, IMAGE_COLUMNS_V2, conform
+from .mathutils import safe_aspect_ratio
+from .schema import AXON_COLUMNS_V2, IMAGE_COLUMNS_V2, MITO_COLUMNS, conform
 
 
 def analyze_image_legacy(
@@ -21,11 +22,18 @@ def analyze_image_legacy(
     pixel_length_um: float,
     seg_cfg: SegmentationConfig,
 ):
-    """Verbatim-equivalent port of the original measure_image() (Phase 1).
+    """Started as a verbatim-equivalent port of the original measure_image()
+    (Phase 1); the axon/image column *content* for the legacy fields is
+    still byte-exact (see tests/golden/), but the return signature grew a
+    5th element in Phase 3b.
 
-    Returns (df_axons, df_image, labels_ws, resolved_mode), exactly
-    matching the legacy 4-tuple and legacy column set/order. `tem` is
-    accepted but unused (matches the original -- see AUDIT.md / F8).
+    Returns (df_axons, df_image, labels_ws, resolved_mode, df_mito).
+    df_mito is empty when mito_assignment="legacy" (no global per-
+    mitochondrion table is meaningful in that mode -- see
+    docs/phase3a_impact.md). compat.measure_image() unpacks this 5-tuple
+    and returns only the first 4, preserving the legacy signature for the
+    GUI. `tem` is accepted but unused (matches the original -- see
+    AUDIT.md / F8).
     """
     px2 = pixel_length_um ** 2
 
@@ -71,6 +79,10 @@ def analyze_image_legacy(
 
     props = regionprops(labels_ws)
     rows = []
+    mito_rows = []  # Phase 3b: one row per real mitochondrion, only
+    # populated when mito_assignment != "legacy" (a "one row per
+    # mitochondrion" table is only meaningful once nothing can fragment
+    # into two rows -- see docs/phase3a_impact.md).
 
     for p in props:
         fiber_id = p.label
@@ -124,14 +136,56 @@ def analyze_image_legacy(
                 cy_local=cy_local,
                 pixel_length_um=pixel_length_um,
             )
+            # Phase 3b's burden/shape/spatial functions take a raw region
+            # list regardless of assignment mode (see metrics_mito.py's
+            # module docstring), so re-derive it here for the legacy path
+            # without touching the regression-tested mito_metrics_for_axon.
+            mito_regions_this_axon = regionprops(label(mito_in_axon_crop, connectivity=2))
         else:
+            mito_regions_this_axon = fiber_to_mito_regions.get(fiber_id, [])
             mito = metrics_mito.mito_metrics_from_regions(
-                mito_regions=fiber_to_mito_regions.get(fiber_id, []),
+                mito_regions=mito_regions_this_axon,
                 axon_area_um2=geom["axon_area_um2"],
                 axon_cx_px=cx_global,
                 axon_cy_px=cy_global,
                 pixel_length_um=pixel_length_um,
             )
+
+        burden = metrics_mito.mito_burden_and_shape_metrics(
+            mito_regions=mito_regions_this_axon,
+            axon_area_um2=geom["axon_area_um2"],
+            fiber_area_um2=geom["fiber_area_um2"],
+            myelin_area_um2=geom["myelin_area_um2"],
+            pixel_length_um=pixel_length_um,
+        )
+        peripheralization = metrics_spatial.mito_peripheralization_index(
+            mito["mito_mean_dist_centroid_um"], geom["axon_area_um2"],
+        )
+        clustering = metrics_spatial.mito_spatial_clustering(
+            mito_regions_this_axon, geom["axon_area_um2"], pixel_length_um,
+            min_count_for_clustering=3,
+        )
+
+        if seg_cfg.mito_assignment != "legacy" and mito_regions_this_axon:
+            for mr in mito_regions_this_axon:
+                mr_cy, mr_cx = mr.centroid
+                dist_um = float(np.hypot(mr_cx - cx_global, mr_cy - cy_global)) * pixel_length_um
+                mito_rows.append({
+                    "mito_id": mr.label,
+                    "parent_axon_id": fiber_id,
+                    "mito_area_um2": mr.area * pixel_length_um ** 2,
+                    "mito_perimeter_um": mr.perimeter * pixel_length_um,
+                    "mito_aspect_ratio": safe_aspect_ratio(mr),
+                    "mito_solidity": mr.solidity,
+                    "mito_eccentricity": mr.eccentricity,
+                    "mito_circularity": (
+                        (4.0 * np.pi * mr.area) / (mr.perimeter ** 2) if mr.perimeter > 0 else np.nan
+                    ),
+                    "mito_feret_um": mr.feret_diameter_max * pixel_length_um,
+                    "mito_centroid_x_px": mr_cx,
+                    "mito_centroid_y_px": mr_cy,
+                    "mito_dist_to_axon_center_um": dist_um,
+                })
 
         rows.append({
             "axon_id": fiber_id,
@@ -168,9 +222,28 @@ def analyze_image_legacy(
             "axon_circularity_crofton": shape["axon_circularity_crofton"],
             "axon_shape_irregularity": shape["axon_shape_irregularity"],
             "axon_shape_irregularity_crofton": shape["axon_shape_irregularity_crofton"],
+            "mito_total_area_um2": burden["mito_total_area_um2"],
+            "mito_occupancy_ratio": burden["mito_occupancy_ratio"],
+            "mito_mean_area_um2": burden["mito_mean_area_um2"],
+            "mito_median_area_um2": burden["mito_median_area_um2"],
+            "mito_area_iqr": burden["mito_area_iqr"],
+            "mito_fragmentation_index": burden["mito_fragmentation_index"],
+            "normalized_mito_load": burden["normalized_mito_load"],
+            "mito_per_myelin": burden["mito_per_myelin"],
+            "mito_mean_aspect_ratio": burden["mito_mean_aspect_ratio"],
+            "mito_std_aspect_ratio": burden["mito_std_aspect_ratio"],
+            "mito_mean_solidity": burden["mito_mean_solidity"],
+            "mito_std_solidity": burden["mito_std_solidity"],
+            "mito_mean_eccentricity": burden["mito_mean_eccentricity"],
+            "mito_peripheralization_index": peripheralization,
+            "mito_mean_nn_distance_um": clustering["mito_mean_nn_distance_um"],
+            "mito_clustering_index": clustering["mito_clustering_index"],
         })
 
     df_axons = pd.DataFrame(rows)
+    df_mito = pd.DataFrame(mito_rows)
+    if not df_mito.empty:
+        df_mito = conform(df_mito, MITO_COLUMNS)
 
     # Stage 6: nearest-neighbour distances.
     if not df_axons.empty:
@@ -246,4 +319,4 @@ def analyze_image_legacy(
     if not df_image.empty:
         df_image = conform(df_image, [c for c in IMAGE_COLUMNS_V2 if c != "image_id"])
 
-    return df_axons, df_image, labels_ws, resolved_mode
+    return df_axons, df_image, labels_ws, resolved_mode, df_mito

@@ -14,6 +14,12 @@ function with no equivalent widgets yet (those land in Phase 7's metric-
 selection panel), so leaving either default at its old value here would
 silently diverge CLI and GUI defaults. Pass mito_hole_handling="legacy"
 and/or mito_assignment="legacy" explicitly to reproduce pre-fix numbers.
+
+pipeline.analyze_image_legacy() itself returns a 5-tuple as of Phase 3b
+(adds a per-mitochondrion df_mito). This wrapper drops that 5th element
+so the GUI's exact 4-tuple contract never changes; the CLI calls
+pipeline.analyze_image_legacy() directly when it needs df_mito (see
+cli.py's --write-mito-csv).
 """
 
 import numpy as np
@@ -59,4 +65,7 @@ def measure_image(
         mito_hole_handling=mito_hole_handling,
         mito_assignment=mito_assignment,
     )
-    return analyze_image_legacy(tem, mask, pixel_length_um, seg_cfg)
+    df_axons, df_image, labels_ws, resolved_mode, _df_mito = analyze_image_legacy(
+        tem, mask, pixel_length_um, seg_cfg,
+    )
+    return df_axons, df_image, labels_ws, resolved_mode

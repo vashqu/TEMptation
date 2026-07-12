@@ -59,7 +59,31 @@ NEW_AXON_SHAPE_COLUMNS = (
     "axon_shape_irregularity_crofton",
 )
 
-AXON_COLUMNS_V2 = AXON_COLUMNS_LEGACY + NEW_AXON_SHAPE_COLUMNS
+# New in Phase 3b (metrics_mito.mito_burden_and_shape_metrics,
+# metrics_spatial.mito_peripheralization_index/mito_spatial_clustering).
+# Computed identically regardless of mito_assignment mode (these take a
+# raw region list, not a mask -- see metrics_mito.py's module docstring),
+# so unlike the Phase 3a diagnostics below, these are never NaN-by-mode.
+NEW_MITO_BURDEN_SHAPE_COLUMNS = (
+    "mito_total_area_um2",
+    "mito_occupancy_ratio",
+    "mito_mean_area_um2",
+    "mito_median_area_um2",
+    "mito_area_iqr",
+    "mito_fragmentation_index",
+    "normalized_mito_load",
+    "mito_per_myelin",
+    "mito_mean_aspect_ratio",
+    "mito_std_aspect_ratio",
+    "mito_mean_solidity",
+    "mito_std_solidity",
+    "mito_mean_eccentricity",
+    "mito_peripheralization_index",
+    "mito_mean_nn_distance_um",
+    "mito_clustering_index",
+)
+
+AXON_COLUMNS_V2 = AXON_COLUMNS_LEGACY + NEW_AXON_SHAPE_COLUMNS + NEW_MITO_BURDEN_SHAPE_COLUMNS
 
 # New in Phase 3a: diagnostics from segmentation.assign_mito_to_axons
 # (global mito-to-axon assignment, fixes F8). NaN when
@@ -67,6 +91,19 @@ AXON_COLUMNS_V2 = AXON_COLUMNS_LEGACY + NEW_AXON_SHAPE_COLUMNS
 NEW_IMAGE_MITO_ASSIGNMENT_COLUMNS = ("n_mito_assigned", "n_mito_unassigned")
 
 IMAGE_COLUMNS_V2 = IMAGE_COLUMNS_LEGACY + NEW_IMAGE_MITO_ASSIGNMENT_COLUMNS
+
+# New in Phase 3b: one row per real mitochondrion (mitochondria_metrics.csv,
+# --write-mito-csv). Only produced when mito_assignment != "legacy" -- see
+# docs/phase3a_impact.md for why a per-mitochondrion table requires the
+# corrected global assignment to be meaningful.
+MITO_COLUMNS = (
+    "mito_id", "parent_axon_id",
+    "mito_area_um2", "mito_perimeter_um",
+    "mito_aspect_ratio", "mito_solidity", "mito_eccentricity",
+    "mito_circularity", "mito_feret_um",
+    "mito_centroid_x_px", "mito_centroid_y_px",
+    "mito_dist_to_axon_center_um",
+)
 
 # Identity/metadata columns, appended (not prepended -- see note above) by
 # cli.py after pipeline.py returns, exactly like image_id/mode already are.
