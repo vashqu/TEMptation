@@ -11,6 +11,7 @@ from . import segmentation as seg_mod
 from . import metrics_axon
 from . import metrics_mito
 from . import metrics_spatial
+from . import summaries
 from .config import SegmentationConfig
 from .mathutils import safe_aspect_ratio
 from .schema import AXON_COLUMNS_V2, IMAGE_COLUMNS_V2, MITO_COLUMNS, conform
@@ -21,6 +22,7 @@ def analyze_image_legacy(
     mask: np.ndarray,
     pixel_length_um: float,
     seg_cfg: SegmentationConfig,
+    reference_myelin_fraction: float = None,
 ):
     """Started as a verbatim-equivalent port of the original measure_image()
     (Phase 1); the axon/image column *content* for the legacy fields is
@@ -34,6 +36,13 @@ def analyze_image_legacy(
     and returns only the first 4, preserving the legacy signature for the
     GUI. `tem` is accepted but unused (matches the original -- see
     AUDIT.md / F8).
+
+    `reference_myelin_fraction` (Phase 4) feeds image_demyelination_index
+    (see summaries.demyelination_index). Deliberately no default: this is
+    a biological calibration choice IMPLEMENTATION_BLUEPRINT.md Sec 11 A4
+    flagged as not derivable from the code or data, and the user was
+    asked explicitly and chose no default over a self-calibrating one --
+    image_demyelination_index is NaN unless this is supplied.
     """
     px2 = pixel_length_um ** 2
 
@@ -309,6 +318,16 @@ def analyze_image_legacy(
         # global assignment is computed in that mode -- see Stage 4c).
         summary["n_mito_assigned"] = n_mito_assigned
         summary["n_mito_unassigned"] = n_mito_unassigned
+
+        # Phase 4: distribution statistics over axon-level columns.
+        # df_axons is passed as-is (equivalent to "every axon is valid")
+        # until Phase 5 adds QC-based filtering -- see this function's
+        # docstring and summaries.py's module docstring.
+        summary.update(summaries.image_distribution_columns(df_axons))
+        summary["image_mvf"] = summaries.image_mvf(df_axons)
+        summary["image_demyelination_index"] = summaries.demyelination_index(
+            myelin_area_fraction_of_fov, reference_myelin_fraction,
+        )
 
         df_image = pd.DataFrame([summary])
     else:

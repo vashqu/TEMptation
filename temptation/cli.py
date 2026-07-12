@@ -97,6 +97,15 @@ def build_parser() -> argparse.ArgumentParser:
              "mitochondrion straddling a watershed boundary (defect F8) -- "
              "use 'legacy' only to reproduce numbers from before this fix.",
     )
+    p.add_argument(
+        "--demyelination-reference", type=float, default=None, metavar="FRACTION",
+        help="Reference myelin_area_fraction_of_fov used to compute "
+             "image_demyelination_index = 1 - (this image's fraction / reference), "
+             "clipped to [0,1]. No default: this is a biological calibration choice "
+             "(IMPLEMENTATION_BLUEPRINT.md Sec 11 A4) -- image_demyelination_index "
+             "is NaN unless you supply this explicitly, e.g. from the median "
+             "myelin_area_fraction_of_fov of a known-normal reference set.",
+    )
     p.add_argument("--output-dir", type=Path, default=None)
     p.add_argument("--plot", action="store_true")
     p.add_argument(
@@ -153,6 +162,7 @@ def process_pair(
     )
     df_axons, df_image, labels_ws, resolved_mode, df_mito = pipeline.analyze_image_legacy(
         tem, mask, pixel_length_um, seg_cfg,
+        reference_myelin_fraction=args.demyelination_reference,
     )
 
     print(f"  [{resolved_mode.upper()}] id={image_id!r}  "

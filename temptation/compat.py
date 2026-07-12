@@ -47,6 +47,7 @@ def measure_image(
     assign_detached_myelin: str = "none",
     mito_hole_handling: str = "fill",
     mito_assignment: str = "centroid",
+    reference_myelin_fraction: float = None,
 ):
     seg_cfg = SegmentationConfig(
         myelin_val=myelin_val,
@@ -67,5 +68,6 @@ def measure_image(
     )
     df_axons, df_image, labels_ws, resolved_mode, _df_mito = analyze_image_legacy(
         tem, mask, pixel_length_um, seg_cfg,
+        reference_myelin_fraction=reference_myelin_fraction,
     )
     return df_axons, df_image, labels_ws, resolved_mode

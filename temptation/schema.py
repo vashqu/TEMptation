@@ -90,7 +90,30 @@ AXON_COLUMNS_V2 = AXON_COLUMNS_LEGACY + NEW_AXON_SHAPE_COLUMNS + NEW_MITO_BURDEN
 # mito_assignment="legacy" (no global assignment computed in that mode).
 NEW_IMAGE_MITO_ASSIGNMENT_COLUMNS = ("n_mito_assigned", "n_mito_unassigned")
 
-IMAGE_COLUMNS_V2 = IMAGE_COLUMNS_LEGACY + NEW_IMAGE_MITO_ASSIGNMENT_COLUMNS
+# New in Phase 4 (summaries.image_distribution_columns): mean/std/cv/
+# median/min/max/iqr for each of summaries.DISTRIBUTION_VARIABLES, named
+# image_{stat}_{variable} per CLAUDE.md Sec 5.1/5.6. Order matches
+# mathutils.distribution_stats's key order (mean, std, cv, median, min,
+# max, iqr).
+_DISTRIBUTION_STATS_ORDER = ("mean", "std", "cv", "median", "min", "max", "iqr")
+_DISTRIBUTION_VARIABLES = ("g_ratio", "axon_area_um2", "mito_density_per_um2", "mito_occupancy_ratio")
+NEW_IMAGE_DISTRIBUTION_COLUMNS = tuple(
+    f"image_{stat}_{var}" for var in _DISTRIBUTION_VARIABLES for stat in _DISTRIBUTION_STATS_ORDER
+)
+
+# New in Phase 4 (summaries.image_mvf, summaries.demyelination_index).
+# image_demyelination_index is NaN unless --demyelination-reference is
+# explicitly supplied (IMPLEMENTATION_BLUEPRINT.md Sec 11 A4 -- the
+# reference is a biological calibration choice, not a default this tool
+# should guess at).
+NEW_IMAGE_MVF_DEMYELINATION_COLUMNS = ("image_mvf", "image_demyelination_index")
+
+IMAGE_COLUMNS_V2 = (
+    IMAGE_COLUMNS_LEGACY
+    + NEW_IMAGE_MITO_ASSIGNMENT_COLUMNS
+    + NEW_IMAGE_DISTRIBUTION_COLUMNS
+    + NEW_IMAGE_MVF_DEMYELINATION_COLUMNS
+)
 
 # New in Phase 3b: one row per real mitochondrion (mitochondria_metrics.csv,
 # --write-mito-csv). Only produced when mito_assignment != "legacy" -- see
