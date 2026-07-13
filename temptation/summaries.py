@@ -75,6 +75,50 @@ def demyelination_index(myelin_area_fraction_of_fov: float, reference_myelin_fra
     return float(np.clip(1.0 - ratio, 0.0, 1.0))
 
 
+def summarize_axon_aggregates(df_axons_subset: pd.DataFrame, resolved_mode: str) -> dict:
+    """The axon-row-dependent portion of the image-level summary: legacy
+    mean_* columns plus the Phase 4 distribution/image_mvf block. Does
+    NOT include mask-derived quantities (mito_outside_frac, myelin
+    totals, n_mito_assigned/unassigned) -- those don't depend on which
+    axons are 'valid' and are computed once, not per subset.
+
+    Phase 5 calls this twice per image: once on the full df_axons (the
+    "_all" summary, always present) and once on the QC-valid subset (the
+    main summary -- identical to "_all" when nothing is excluded, which
+    is why calling this on the unfiltered df_axons must reproduce the
+    exact legacy mean_* values; see tests/test_regression_golden.py).
+    """
+    if df_axons_subset.empty:
+        summary = {
+            "mean_axon_area_um2": np.nan,
+            "mean_circularity": np.nan,
+            "mean_convexity": np.nan,
+            "mean_avf": np.nan,
+            "mean_g_ratio": np.nan,
+            "mean_myelin_thickness_um": np.nan,
+            "mean_mvf": np.nan,
+        }
+    else:
+        summary = {
+            "mean_axon_area_um2": df_axons_subset["axon_area_um2"].mean(),
+            "mean_circularity": df_axons_subset["circularity"].mean(),
+            "mean_convexity": df_axons_subset["convexity"].mean(),
+            "mean_avf": df_axons_subset["axon_vol_fraction"].mean(),
+        }
+        if resolved_mode == "normal":
+            summary["mean_g_ratio"] = df_axons_subset["g_ratio"].mean()
+            summary["mean_myelin_thickness_um"] = df_axons_subset["myelin_thickness_um"].mean()
+            summary["mean_mvf"] = df_axons_subset["myelin_vol_fraction"].mean()
+        else:
+            summary["mean_g_ratio"] = np.nan
+            summary["mean_myelin_thickness_um"] = np.nan
+            summary["mean_mvf"] = np.nan
+
+    summary.update(image_distribution_columns(df_axons_subset))
+    summary["image_mvf"] = image_mvf(df_axons_subset)
+    return summary
+
+
 def summarize_groups(df_images: pd.DataFrame) -> pd.DataFrame:
     """One row per group: n_images, plus mean/std (ddof=1) of the key
     image-level metrics. Optional output -- the --write-group-csv CLI

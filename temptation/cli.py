@@ -15,8 +15,9 @@ from . import discovery
 from . import export
 from . import pipeline
 from . import plotting
+from . import qc as qc_mod
 from . import schema
-from .config import SegmentationConfig
+from .config import QCThresholds, SegmentationConfig
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -106,6 +107,38 @@ def build_parser() -> argparse.ArgumentParser:
              "is NaN unless you supply this explicitly, e.g. from the median "
              "myelin_area_fraction_of_fov of a known-normal reference set.",
     )
+
+    qc_grp = p.add_argument_group("Quality control (CLAUDE.md Sec 6-8)")
+    qc_grp.add_argument(
+        "--exclude-qc-failed", action="store_true",
+        help="Mark axons that fail an excludable QC flag as "
+             "excluded_from_analysis (with exclusion_reason). Rows are never "
+             "dropped from axons.csv -- only image-level 'valid' aggregates "
+             "and the *_all-suffixed unfiltered aggregates diverge. Off by "
+             "default: compute and flag everything, exclude nothing "
+             "(CLAUDE.md Sec 8's default). qc_no_myelin, qc_no_mitochondria, "
+             "and qc_low_mito_count_clustering can never trigger exclusion "
+             "regardless of this flag -- they are expected states, not "
+             "data-quality problems (CLAUDE.md Sec 6.5).",
+    )
+    qc_grp.add_argument("--g-ratio-min", type=float, default=0.3, metavar="FLOAT")
+    qc_grp.add_argument("--g-ratio-max", type=float, default=0.95, metavar="FLOAT")
+    qc_grp.add_argument("--axon-circularity-min", type=float, default=0.4, metavar="FLOAT")
+    qc_grp.add_argument(
+        "--min-myelin-area-um2", type=float, default=None, metavar="FLOAT",
+        help="No default (None): qc_low_myelin_area stays all-False until calibrated "
+             "for this dataset (CLAUDE.md Sec 7).",
+    )
+    qc_grp.add_argument("--min-axon-area-um2", type=float, default=None, metavar="FLOAT")
+    qc_grp.add_argument("--min-fiber-area-um2", type=float, default=None, metavar="FLOAT")
+    qc_grp.add_argument("--min-mito-count-for-clustering", type=int, default=3, metavar="INT")
+    qc_grp.add_argument(
+        "--write-qc-report", action="store_true",
+        help="Also write qc_report.csv: a slim per-axon view (identifiers + "
+             "every qc_* flag + exclusion columns), for quick review without "
+             "the full metric set.",
+    )
+
     p.add_argument("--output-dir", type=Path, default=None)
     p.add_argument("--plot", action="store_true")
     p.add_argument(
@@ -160,9 +193,20 @@ def process_pair(
         mito_hole_handling=args.mito_hole_handling,
         mito_assignment=args.mito_assignment,
     )
+    qc_thresholds = QCThresholds(
+        g_ratio_min=args.g_ratio_min,
+        g_ratio_max=args.g_ratio_max,
+        axon_circularity_min=args.axon_circularity_min,
+        min_myelin_area_um2=args.min_myelin_area_um2,
+        min_axon_area_um2=args.min_axon_area_um2,
+        min_fiber_area_um2=args.min_fiber_area_um2,
+        min_mito_count_for_clustering=args.min_mito_count_for_clustering,
+    )
     df_axons, df_image, labels_ws, resolved_mode, df_mito = pipeline.analyze_image_legacy(
         tem, mask, pixel_length_um, seg_cfg,
         reference_myelin_fraction=args.demyelination_reference,
+        qc_thresholds=qc_thresholds,
+        exclude_qc_failed=args.exclude_qc_failed,
     )
 
     print(f"  [{resolved_mode.upper()}] id={image_id!r}  "
@@ -197,6 +241,8 @@ def process_pair(
                   f"--mito-assignment legacy for id={image_id!r} "
                   f"(no per-mitochondrion table in that mode).")
 
+    df_qc_report = qc_mod.qc_report(df_axons) if getattr(args, "write_qc_report", False) else pd.DataFrame()
+
     if args.plot and not df_axons.empty:
         plot_path = output_dir / f"overlay_{image_id}.png"
         try:
@@ -216,7 +262,7 @@ def process_pair(
             print(f"  [WARNING] Plot failed for id={image_id!r}: {plot_exc}")
             traceback.print_exc()
 
-    return df_axons, df_image, df_mito
+    return df_axons, df_image, df_mito, df_qc_report
 
 
 def main():
@@ -277,10 +323,11 @@ def main():
     all_axons = []
     all_images = []
     all_mito = []
+    all_qc_reports = []
 
     for pair in pairs:
         try:
-            df_axons, df_image, df_mito = process_pair(
+            df_axons, df_image, df_mito, df_qc_report = process_pair(
                 image_id=pair["id"],
                 tem_path=pair["tem_path"],
                 mask_path=pair["mask_path"],
@@ -295,6 +342,8 @@ def main():
                 all_images.append(df_image)
             if not df_mito.empty:
                 all_mito.append(df_mito)
+            if not df_qc_report.empty:
+                all_qc_reports.append(df_qc_report)
         except Exception as exc:
             print(f"\n[ERROR] id={pair['id']!r} failed with: {exc}")
             traceback.print_exc()
@@ -320,5 +369,13 @@ def main():
             print(f"Mitochondria results → {mito_csv}  ({len(df_all_mito)} rows)")
         else:
             print("No mitochondria to write (empty or --mito-assignment legacy).")
+
+    if args.write_qc_report:
+        if all_qc_reports:
+            df_all_qc = pd.concat(all_qc_reports, ignore_index=True)
+            qc_csv = export.write_qc_report_csv(df_all_qc, output_dir)
+            print(f"QC report            → {qc_csv}  ({len(df_all_qc)} rows)")
+        else:
+            print("No QC report to write.")
 
     return df_all_axons

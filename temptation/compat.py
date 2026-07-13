@@ -24,7 +24,7 @@ cli.py's --write-mito-csv).
 
 import numpy as np
 
-from .config import SegmentationConfig
+from .config import QCThresholds, SegmentationConfig
 from .pipeline import analyze_image_legacy
 
 
@@ -48,6 +48,8 @@ def measure_image(
     mito_hole_handling: str = "fill",
     mito_assignment: str = "centroid",
     reference_myelin_fraction: float = None,
+    qc_thresholds: QCThresholds = None,
+    exclude_qc_failed: bool = False,
 ):
     seg_cfg = SegmentationConfig(
         myelin_val=myelin_val,
@@ -69,5 +71,7 @@ def measure_image(
     df_axons, df_image, labels_ws, resolved_mode, _df_mito = analyze_image_legacy(
         tem, mask, pixel_length_um, seg_cfg,
         reference_myelin_fraction=reference_myelin_fraction,
+        qc_thresholds=qc_thresholds,
+        exclude_qc_failed=exclude_qc_failed,
     )
     return df_axons, df_image, labels_ws, resolved_mode

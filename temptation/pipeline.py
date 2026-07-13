@@ -7,12 +7,13 @@ import pandas as pd
 from skimage.measure import label, regionprops
 
 from . import masks as masks_mod
+from . import qc as qc_mod
 from . import segmentation as seg_mod
 from . import metrics_axon
 from . import metrics_mito
 from . import metrics_spatial
 from . import summaries
-from .config import SegmentationConfig
+from .config import QCThresholds, SegmentationConfig
 from .mathutils import safe_aspect_ratio
 from .schema import AXON_COLUMNS_V2, IMAGE_COLUMNS_V2, MITO_COLUMNS, conform
 
@@ -23,6 +24,8 @@ def analyze_image_legacy(
     pixel_length_um: float,
     seg_cfg: SegmentationConfig,
     reference_myelin_fraction: float = None,
+    qc_thresholds: QCThresholds = None,
+    exclude_qc_failed: bool = False,
 ):
     """Started as a verbatim-equivalent port of the original measure_image()
     (Phase 1); the axon/image column *content* for the legacy fields is
@@ -43,6 +46,14 @@ def analyze_image_legacy(
     flagged as not derivable from the code or data, and the user was
     asked explicitly and chose no default over a self-calibrating one --
     image_demyelination_index is NaN unless this is supplied.
+
+    `qc_thresholds`/`exclude_qc_failed` (Phase 5): qc_* flags are always
+    computed (defaults to QCThresholds() if not given -- flags are cheap
+    and CLAUDE.md Sec 7 wants them on by default). exclude_qc_failed
+    defaults to False, matching CLAUDE.md Sec 8's default behavior:
+    compute everything, flag everything, exclude nothing unless the
+    caller opts in. Excluded rows are marked, never dropped -- axons.csv
+    row count is invariant to this flag (see tests/test_qc.py).
     """
     px2 = pixel_length_um ** 2
 
@@ -262,29 +273,49 @@ def analyze_image_legacy(
         else:
             df_axons["nearest_neighbor_um"] = np.nan
 
+    # Stage 6b (Phase 5): QC flags (always computed) and exclusion marking
+    # (opt-in, never drops rows -- CLAUDE.md Sec 6/8).
+    effective_qc_thresholds = qc_thresholds if qc_thresholds is not None else QCThresholds()
+    df_axons = qc_mod.compute_qc_flags(df_axons, effective_qc_thresholds)
+    df_axons = qc_mod.apply_exclusions(df_axons, enabled=exclude_qc_failed)
+
     # Stage 7: image-level summary.
     if not df_axons.empty:
         n_fibers = len(df_axons)
         fiber_density_per_mm2 = (n_fibers / fov_area_um2) * 1e6
 
+        valid_mask = ~df_axons["excluded_from_analysis"]
+        df_axons_valid = df_axons[valid_mask]
+        n_valid = int(valid_mask.sum())
+        n_excluded = n_fibers - n_valid
+
         summary = {
             "n_fibers": n_fibers,
             "fov_area_um2": fov_area_um2,
             "fiber_density_per_mm2": fiber_density_per_mm2,
-            "mean_axon_area_um2": df_axons["axon_area_um2"].mean(),
-            "mean_circularity": df_axons["circularity"].mean(),
-            "mean_convexity": df_axons["convexity"].mean(),
-            "mean_avf": df_axons["axon_vol_fraction"].mean(),
             "mode": resolved_mode,
         }
-        if resolved_mode == "normal":
-            summary["mean_g_ratio"] = df_axons["g_ratio"].mean()
-            summary["mean_myelin_thickness_um"] = df_axons["myelin_thickness_um"].mean()
-            summary["mean_mvf"] = df_axons["myelin_vol_fraction"].mean()
-        else:
-            summary["mean_g_ratio"] = np.nan
-            summary["mean_myelin_thickness_um"] = np.nan
-            summary["mean_mvf"] = np.nan
+        # Axon-row-dependent aggregates: main columns reflect the QC-valid
+        # subset (identical to "_all" when nothing is excluded, which is
+        # why this reproduces the legacy mean_* values exactly by default
+        # -- see tests/test_regression_golden.py). "_all" always present
+        # for schema stability and to preserve the unfiltered view
+        # (CLAUDE.md Sec 6.4).
+        summary.update(summaries.summarize_axon_aggregates(df_axons_valid, resolved_mode))
+        summary_all = summaries.summarize_axon_aggregates(df_axons, resolved_mode)
+        summary.update({f"{k}_all": v for k, v in summary_all.items()})
+
+        summary["image_n_axons_total"] = n_fibers
+        summary["image_n_axons_valid"] = n_valid
+        summary["image_n_axons_excluded"] = n_excluded
+        flag_cols = [c for c in qc_mod.QC_FLAG_COLUMNS if c in df_axons.columns]
+        any_flag = df_axons[flag_cols].any(axis=1) if flag_cols else pd.Series(False, index=df_axons.index)
+        summary["image_percent_flagged_axons"] = (
+            100.0 * any_flag.mean() if n_fibers > 0 else np.nan
+        )
+        summary["qc_high_exclusion_rate"] = (
+            bool(n_excluded / n_fibers > 0.3) if n_fibers > 0 else False
+        )
 
         # F2 (IMPLEMENTATION_BLUEPRINT.md Sec 0): the legacy computation
         # compares mito against axon_only (raw, pre-hole-handling), which
@@ -319,15 +350,17 @@ def analyze_image_legacy(
         summary["n_mito_assigned"] = n_mito_assigned
         summary["n_mito_unassigned"] = n_mito_unassigned
 
-        # Phase 4: distribution statistics over axon-level columns.
-        # df_axons is passed as-is (equivalent to "every axon is valid")
-        # until Phase 5 adds QC-based filtering -- see this function's
-        # docstring and summaries.py's module docstring.
-        summary.update(summaries.image_distribution_columns(df_axons))
-        summary["image_mvf"] = summaries.image_mvf(df_axons)
+        # Phase 4: demyelination index (mask-derived, not axon-row-
+        # dependent, so computed once regardless of exclusion).
         summary["image_demyelination_index"] = summaries.demyelination_index(
             myelin_area_fraction_of_fov, reference_myelin_fraction,
         )
+
+        # Phase 5: mask-quality QC diagnostic (F6) -- wires up
+        # masks.mask_sanity, unused since Phase 2.
+        mask_qc = masks_mod.mask_sanity(mask, seg_cfg)
+        summary["image_noncanonical_mask_frac"] = mask_qc["noncanonical_frac"]
+        summary["qc_mask_noncanonical"] = bool(mask_qc["noncanonical_frac"] > 0.001)
 
         df_image = pd.DataFrame([summary])
     else:

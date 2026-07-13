@@ -23,3 +23,10 @@ def write_mito_csv(df_mito: pd.DataFrame, out_dir: Path) -> Path:
     path = Path(out_dir) / "mitochondria_metrics.csv"
     df_mito.to_csv(path, index=False)
     return path
+
+
+def write_qc_report_csv(df_qc: pd.DataFrame, out_dir: Path) -> Path:
+    """Slim per-axon QC view (Phase 5, --write-qc-report)."""
+    path = Path(out_dir) / "qc_report.csv"
+    df_qc.to_csv(path, index=False)
+    return path

@@ -4,6 +4,9 @@ axons a particular image happened to contain."""
 import numpy as np
 import pandas as pd
 
+from . import qc as _qc
+from . import summaries as _summaries
+
 # SCHEMA_VERSION is the baseline/legacy value (mito_hole_handling="legacy",
 # bug-for-bug identical to the pre-refactor tool). SCHEMA_VERSION_FILL
 # marks output produced with the Phase 2b fix active (mito_hole_handling=
@@ -83,7 +86,18 @@ NEW_MITO_BURDEN_SHAPE_COLUMNS = (
     "mito_clustering_index",
 )
 
-AXON_COLUMNS_V2 = AXON_COLUMNS_LEGACY + NEW_AXON_SHAPE_COLUMNS + NEW_MITO_BURDEN_SHAPE_COLUMNS
+# New in Phase 5 (qc.py): every qc_* flag is always computed
+# (CLAUDE.md Sec 7), plus the exclusion-marking columns (Sec 8). Sourced
+# from qc.QC_FLAG_COLUMNS directly rather than duplicated here, so the
+# two lists can never drift apart.
+NEW_AXON_QC_COLUMNS = _qc.QC_FLAG_COLUMNS + ("excluded_from_analysis", "exclusion_reason")
+
+AXON_COLUMNS_V2 = (
+    AXON_COLUMNS_LEGACY
+    + NEW_AXON_SHAPE_COLUMNS
+    + NEW_MITO_BURDEN_SHAPE_COLUMNS
+    + NEW_AXON_QC_COLUMNS
+)
 
 # New in Phase 3a: diagnostics from segmentation.assign_mito_to_axons
 # (global mito-to-axon assignment, fixes F8). NaN when
@@ -108,11 +122,33 @@ NEW_IMAGE_DISTRIBUTION_COLUMNS = tuple(
 # should guess at).
 NEW_IMAGE_MVF_DEMYELINATION_COLUMNS = ("image_mvf", "image_demyelination_index")
 
+# New in Phase 5: the "_all" (unfiltered) counterpart of every key
+# summaries.summarize_axon_aggregates produces, plus exclusion/flag
+# diagnostics and the mask-quality check (wires up masks.mask_sanity,
+# unused since Phase 2). Sourced from summarize_axon_aggregates's actual
+# output keys (called once on an empty frame, which the function handles
+# without raising) rather than hand-enumerated, so this can never drift
+# from what pipeline.py actually emits.
+_AXON_AGGREGATE_KEYS = tuple(_summaries.summarize_axon_aggregates(pd.DataFrame(), "normal").keys())
+NEW_IMAGE_ALL_SUFFIXED_COLUMNS = tuple(f"{k}_all" for k in _AXON_AGGREGATE_KEYS)
+
+NEW_IMAGE_QC_COLUMNS = (
+    "image_n_axons_total",
+    "image_n_axons_valid",
+    "image_n_axons_excluded",
+    "image_percent_flagged_axons",
+    "qc_high_exclusion_rate",
+    "image_noncanonical_mask_frac",
+    "qc_mask_noncanonical",
+)
+
 IMAGE_COLUMNS_V2 = (
     IMAGE_COLUMNS_LEGACY
     + NEW_IMAGE_MITO_ASSIGNMENT_COLUMNS
     + NEW_IMAGE_DISTRIBUTION_COLUMNS
     + NEW_IMAGE_MVF_DEMYELINATION_COLUMNS
+    + NEW_IMAGE_QC_COLUMNS
+    + NEW_IMAGE_ALL_SUFFIXED_COLUMNS
 )
 
 # New in Phase 3b: one row per real mitochondrion (mitochondria_metrics.csv,
