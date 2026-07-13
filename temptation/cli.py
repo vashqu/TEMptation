@@ -17,6 +17,7 @@ from . import pipeline
 from . import plotting
 from . import qc as qc_mod
 from . import schema
+from . import summaries
 from .config import QCThresholds, SegmentationConfig
 
 
@@ -148,6 +149,21 @@ def build_parser() -> argparse.ArgumentParser:
              "under --mito-assignment legacy, since a per-fiber-crop mitochondrion "
              "fragment is not a real, whole mitochondrion.",
     )
+    p.add_argument(
+        "--write-group-csv", action="store_true",
+        help="Also write group_metrics.csv: one row per group with n_images and "
+             "mean/std of the key image-level metrics (summaries.summarize_groups).",
+    )
+    p.add_argument(
+        "--schema", choices=["legacy", "full"], default="full",
+        help="'full' (default) writes every column this version of the tool "
+             "computes. 'legacy' writes only the original pre-refactor column "
+             "set, in its original order and position, for downstream scripts "
+             "that don't expect new columns. Not to be confused with the "
+             "per-row schema_version column, which tracks whether "
+             "--mito-hole-handling fill or legacy produced a row's numbers -- "
+             "that is a value-correctness axis, this is a column-layout axis.",
+    )
 
     return p
 
@@ -212,25 +228,31 @@ def process_pair(
     print(f"  [{resolved_mode.upper()}] id={image_id!r}  "
           f"→ {len(df_axons)} axons detected")
 
+    # Phase 6: unconditional, even for a 0-row df -- pandas .insert()/
+    # column assignment on a 0-row DataFrame correctly adds the column
+    # (0 rows, right dtype), it just doesn't manufacture any values. A
+    # gate here means a genuinely-processed-but-zero-axon image silently
+    # loses image_id/mode/group/etc. from its (already 0-row) axons.csv
+    # contribution -- verified live: this is exactly the same "unstable
+    # schema" bug as the one fixed in pipeline.py, just one layer up.
     for df in (df_axons, df_image):
-        if not df.empty:
-            if "image_id" not in df.columns:
-                df.insert(0, "image_id", image_id)
-            else:
-                df["image_id"] = image_id
-            if "mode" not in df.columns:
-                df.insert(1, "mode", resolved_mode)
-            else:
-                df["mode"] = resolved_mode
-            # Identity/metadata columns (Phase 2). Appended, not inserted,
-            # so the legacy column positions above are undisturbed -- see
-            # schema.py's note on why the full identity-block-prepend
-            # redesign is deferred to Phase 6.
-            df["group"] = group
-            df["image_path"] = str(tem_path)
-            df["mask_path"] = str(mask_path)
-            df["pixel_size_um"] = pixel_length_um
-            df["schema_version"] = schema.resolve_schema_version(args.mito_hole_handling)
+        if "image_id" not in df.columns:
+            df.insert(0, "image_id", image_id)
+        else:
+            df["image_id"] = image_id
+        if "mode" not in df.columns:
+            df.insert(1, "mode", resolved_mode)
+        else:
+            df["mode"] = resolved_mode
+        # Identity/metadata columns (Phase 2). Appended, not inserted,
+        # so the legacy column positions above are undisturbed -- see
+        # schema.py's note on why the full identity-block-prepend
+        # redesign is deferred to Phase 6.
+        df["group"] = group
+        df["image_path"] = str(tem_path)
+        df["mask_path"] = str(mask_path)
+        df["pixel_size_um"] = pixel_length_um
+        df["schema_version"] = schema.resolve_schema_version(args.mito_hole_handling)
 
     if getattr(args, "write_mito_csv", False):
         if not df_mito.empty:
@@ -336,10 +358,14 @@ def main():
                 output_dir=output_dir,
                 group=pair.get("group"),
             )
-            if not df_axons.empty:
-                all_axons.append(df_axons)
-            if not df_image.empty:
-                all_images.append(df_image)
+            # Phase 6: append unconditionally, even when 0 rows -- both
+            # df_axons and df_image are now always conformed to their
+            # full column set regardless of emptiness (see pipeline.py),
+            # so concatenating an all-empty batch still yields a
+            # correctly-headered, 0-row CSV instead of a columnless one
+            # (the "unstable schema" half of F8).
+            all_axons.append(df_axons)
+            all_images.append(df_image)
             if not df_mito.empty:
                 all_mito.append(df_mito)
             if not df_qc_report.empty:
@@ -349,33 +375,89 @@ def main():
             traceback.print_exc()
             print()
 
-    if all_axons:
-        df_all_axons = pd.concat(all_axons, ignore_index=True)
-        axon_csv = export.write_axon_csv(df_all_axons, output_dir)
+    df_all_axons = pd.concat(all_axons, ignore_index=True) if all_axons else pd.DataFrame()
+    df_all_images = pd.concat(all_images, ignore_index=True) if all_images else pd.DataFrame()
+
+    # --schema legacy: strip down to exactly the pre-refactor column set,
+    # in its original order/position -- for downstream scripts that don't
+    # expect new columns. Applied only at write time, after every metric
+    # has already been computed, so this never affects any other output
+    # (mito/qc/group CSVs, or the manifest's row_counts/exclusion_counts,
+    # which are computed from the full -- not schema-stripped -- frames).
+    if args.schema == "legacy":
+        df_all_axons = schema.conform(df_all_axons, schema.AXON_COLUMNS_LEGACY)
+        df_all_images = schema.conform(df_all_images, schema.IMAGE_COLUMNS_LEGACY)
+
+    outputs = {}
+
+    axon_csv = export.write_axon_csv(df_all_axons, output_dir)
+    outputs["axons_csv"] = axon_csv
+    if len(df_all_axons) > 0:
         print(f"\nAxon-level results  → {axon_csv}  ({len(df_all_axons)} rows)")
     else:
-        print("\nNo axons detected across all images.")
-        df_all_axons = pd.DataFrame()
+        print(f"\nNo axons detected across all images. Empty axons.csv written → {axon_csv}")
 
-    if all_images:
-        df_all_images = pd.concat(all_images, ignore_index=True)
-        img_csv = export.write_image_csv(df_all_images, output_dir)
+    img_csv = export.write_image_csv(df_all_images, output_dir)
+    outputs["image_summary_csv"] = img_csv
+    if len(df_all_images) > 0:
         print(f"Image-level summary → {img_csv}  ({len(df_all_images)} rows)")
 
+    df_all_mito = pd.DataFrame()
     if args.write_mito_csv:
         if all_mito:
             df_all_mito = pd.concat(all_mito, ignore_index=True)
             mito_csv = export.write_mito_csv(df_all_mito, output_dir)
+            outputs["mitochondria_metrics_csv"] = mito_csv
             print(f"Mitochondria results → {mito_csv}  ({len(df_all_mito)} rows)")
         else:
             print("No mitochondria to write (empty or --mito-assignment legacy).")
 
+    df_all_qc = pd.DataFrame()
     if args.write_qc_report:
         if all_qc_reports:
             df_all_qc = pd.concat(all_qc_reports, ignore_index=True)
             qc_csv = export.write_qc_report_csv(df_all_qc, output_dir)
+            outputs["qc_report_csv"] = qc_csv
             print(f"QC report            → {qc_csv}  ({len(df_all_qc)} rows)")
         else:
             print("No QC report to write.")
+
+    df_all_groups = pd.DataFrame()
+    if args.write_group_csv:
+        df_all_groups = summaries.summarize_groups(df_all_images)
+        if not df_all_groups.empty:
+            group_csv = export.write_group_csv(df_all_groups, output_dir)
+            outputs["group_metrics_csv"] = group_csv
+            print(f"Group summary        → {group_csv}  ({len(df_all_groups)} rows)")
+        else:
+            print("No group summary to write (no 'group' values assigned this run).")
+
+    manifest_config = {k: v for k, v in vars(args).items()}
+    # args.output_dir/pixel_um can be None (inferred from --folder /
+    # --bar) -- record what was actually resolved and used, not just the
+    # raw (possibly absent) CLI value.
+    manifest_config["resolved_output_dir"] = str(output_dir)
+    manifest_config["resolved_pixel_length_um"] = pixel_length_um
+    manifest_inputs = [
+        {"id": p["id"], "tem_path": p["tem_path"], "mask_path": p["mask_path"], "group": p.get("group")}
+        for p in pairs
+    ]
+    manifest_skipped = [{"path": s.path, "reason": s.reason} for s in skipped_files]
+    manifest_path = export.write_run_manifest(
+        output_dir,
+        config=manifest_config,
+        inputs=manifest_inputs,
+        skipped_files=manifest_skipped,
+        outputs=outputs,
+        row_counts={
+            "axons": len(df_all_axons),
+            "images": len(df_all_images),
+            "mitochondria": len(df_all_mito),
+            "qc_report": len(df_all_qc),
+            "groups": len(df_all_groups),
+        },
+        exclusion_counts=qc_mod.exclusion_reason_counts(df_all_axons),
+    )
+    print(f"Run manifest         → {manifest_path}")
 
     return df_all_axons

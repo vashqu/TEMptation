@@ -262,8 +262,14 @@ def analyze_image_legacy(
 
     df_axons = pd.DataFrame(rows)
     df_mito = pd.DataFrame(mito_rows)
-    if not df_mito.empty:
-        df_mito = conform(df_mito, MITO_COLUMNS)
+    # Phase 6 (fixes the unstable-schema half of F8): conform
+    # unconditionally, even when 0 rows, so a 0-mitochondrion image still
+    # yields the full MITO_COLUMNS header rather than an empty (0-column)
+    # frame -- verified this matters: pd.DataFrame().reindex(columns=...)
+    # correctly produces a 0-row, fully-columned frame, and concatenating
+    # multiple such frames across a batch preserves that column set even
+    # if every single image in the batch has zero mitochondria.
+    df_mito = conform(df_mito, MITO_COLUMNS)
 
     # Stage 6: nearest-neighbour distances.
     if not df_axons.empty:
@@ -364,11 +370,16 @@ def analyze_image_legacy(
 
         df_image = pd.DataFrame([summary])
     else:
+        # Legacy behavior preserved: an image with zero detected axons
+        # gets zero image_summary.csv rows (not a placeholder row of
+        # NaNs) -- matching the original measure_image()'s "if not
+        # df_axons.empty" gate. Phase 6 only fixes the *columns* of that
+        # empty result, not whether a row is emitted at all.
         df_image = pd.DataFrame()
 
-    if not df_axons.empty:
-        df_axons = conform(df_axons, [c for c in AXON_COLUMNS_V2 if c not in ("image_id", "mode")])
-    if not df_image.empty:
-        df_image = conform(df_image, [c for c in IMAGE_COLUMNS_V2 if c != "image_id"])
+    # Phase 6: conform unconditionally (see the df_mito comment above for
+    # why this is safe and necessary even at 0 rows).
+    df_axons = conform(df_axons, [c for c in AXON_COLUMNS_V2 if c not in ("image_id", "mode")])
+    df_image = conform(df_image, [c for c in IMAGE_COLUMNS_V2 if c != "image_id"])
 
     return df_axons, df_image, labels_ws, resolved_mode, df_mito

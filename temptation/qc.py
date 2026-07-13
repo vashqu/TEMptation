@@ -177,3 +177,20 @@ def qc_report(df_axons: pd.DataFrame) -> pd.DataFrame:
     flag_cols = [c for c in QC_FLAG_COLUMNS if c in df_axons.columns]
     extra_cols = [c for c in ("excluded_from_analysis", "exclusion_reason") if c in df_axons.columns]
     return df_axons[id_cols + flag_cols + extra_cols].copy()
+
+
+def exclusion_reason_counts(df_axons: pd.DataFrame) -> dict:
+    """How many axons were excluded for each individual reason token,
+    across the whole batch. An axon excluded for two simultaneous reasons
+    contributes to both counts. Used in run_manifest.json (Phase 6) so an
+    exclusion-heavy run is auditable at a glance rather than requiring a
+    manual scan of exclusion_reason strings."""
+    if df_axons.empty or "exclusion_reason" not in df_axons.columns:
+        return {}
+    counts: dict = {}
+    for reason in df_axons["exclusion_reason"].dropna():
+        if not reason:
+            continue
+        for token in reason.split(";"):
+            counts[token] = counts.get(token, 0) + 1
+    return counts
