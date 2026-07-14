@@ -21,6 +21,8 @@ from temptation import pipeline
 
 from .panels import calibration as calibration_panel
 from .panels import dataset as dataset_panel
+from .panels import metrics as metrics_panel
+from .panels import qc as qc_panel
 from .state import STEP_IDS, STEP_LABELS, AppState
 from .widgets import (
     BG,
@@ -123,6 +125,10 @@ class TEMptationApp(tk.Tk):
                 dataset_panel.build(frame, self.state_)
             elif sid == "calibration":
                 calibration_panel.build(frame, self.state_)
+            elif sid == "metrics":
+                metrics_panel.build(frame, self.state_)
+            elif sid == "qc":
+                qc_panel.build(frame, self.state_)
             elif sid == "run":
                 self._build_run_panel(frame)
             else:
@@ -250,7 +256,7 @@ class TEMptationApp(tk.Tk):
                 seg_cfg=self.state_.seg_cfg,
                 qc_thresholds=self.state_.qc_thresholds,
                 exclude_qc_failed=self.state_.exclude_qc_failed,
-                collect_mito=True,
+                collect_mito=self.state_.collect_mito,
                 collect_qc_report=True,
                 on_image_done=on_done,
                 on_image_error=on_error,
@@ -271,6 +277,7 @@ class TEMptationApp(tk.Tk):
     def _run_done(self, result, cancel_event):
         self.state_.run_in_progress = False
         self.state_.result = result
+        self.state_.last_raw_axons = result.df_axons
         self._cancel_btn.configure(state="disabled")
         n_err = len(result.errors)
         if cancel_event.is_set():

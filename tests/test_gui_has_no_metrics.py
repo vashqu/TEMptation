@@ -26,6 +26,11 @@ BANNED_CALLS = {
 
 ALLOWED_TEMPTATION_SUBMODULES = {
     "pipeline", "plotting", "export", "config", "dataio", "discovery", "compat",
+    # qc.compute_qc_flags is itself the backend flag engine -- the QC
+    # panel's live preview (blueprint Sec 8.5) calls it directly so the
+    # preview can never drift from what a real Run would compute; that
+    # is reuse, not the reimplementation this guard exists to catch.
+    "qc",
 }
 
 

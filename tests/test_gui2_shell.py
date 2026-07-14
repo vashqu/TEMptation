@@ -105,3 +105,61 @@ def test_gui2_run_calls_analyze_dataset_and_matches_cli(app, tmp_path):
     assert len(result.df_axons) == 47  # matches tests/golden_v2/normal row count
     assert len(result.errors) == 0
     assert app.state_.step_status["run"] == "complete"
+    # last_raw_axons must survive a subsequent mark_inputs_changed() (e.g.
+    # editing a QC threshold) -- it's what the QC panel's live preview
+    # recomputes against without a re-run (blueprint Sec 8.5).
+    assert app.state_.last_raw_axons is not None
+    app.state_.mark_inputs_changed()
+    assert app.state_.last_raw_axons is not None
+    assert app.state_.result is None
+
+
+def test_gui2_metrics_scan_detects_myelin_presence(app):
+    """normal_data/162-165's masks all contain myelin -- the scan should
+    report full availability, not just "not yet scanned"."""
+    from temptation import discovery
+
+    from gui.panels.metrics import _scan
+    from gui.state import GroupEntry
+
+    entry = GroupEntry(name="normal")
+    pairs, _ = discovery._scan_folder_recursive(NORMAL_DIR)
+    entry.pairs = pairs
+    app.state_.groups["normal"] = entry
+
+    import tkinter as tk
+    availability_var = tk.StringVar()
+    status_var = tk.StringVar()
+    status_lbl = tk.Label(app)
+    card_widgets = {"g-ratio distribution": (status_var, status_lbl, ("myelin",), False)}
+
+    _scan(app.state_, availability_var, card_widgets)
+
+    assert "myelin in 4" in availability_var.get()
+    assert "available" in status_var.get()
+
+
+def test_gui2_metrics_and_qc_panels_build_with_prior_run_data(app):
+    """Building the metrics/QC panels with a populated dataset and a
+    prior run's raw axons exercises the mask-scan setup and the QC
+    live-preview recompute path, both of which only run once real data
+    exists -- a bare construction test wouldn't reach either."""
+    import tkinter as tk
+
+    import pandas as pd
+    from temptation import discovery
+
+    from gui.panels import metrics as metrics_panel
+    from gui.panels import qc as qc_panel
+    from gui.state import GroupEntry
+
+    entry = GroupEntry(name="normal")
+    pairs, _ = discovery._scan_folder_recursive(NORMAL_DIR)
+    entry.pairs = pairs
+    app.state_.groups["normal"] = entry
+    app.state_.last_raw_axons = pd.read_csv(
+        Path(__file__).parent / "golden_v2" / "normal" / "axons.csv"
+    )
+
+    metrics_panel.build(tk.Frame(app), app.state_)
+    qc_panel.build(tk.Frame(app), app.state_)

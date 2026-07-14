@@ -55,8 +55,15 @@ class AppState:
         self.seg_cfg: SegmentationConfig = SegmentationConfig()
         self.qc_thresholds: QCThresholds = QCThresholds()
         self.exclude_qc_failed: bool = False
+        self.collect_mito: bool = False
 
         self.result = None  # temptation.pipeline.DatasetResult, once a run completes
+        # Raw per-axon metrics from the last completed run, kept around
+        # independent of `result`/mark_inputs_changed() so the QC panel's
+        # live preview (blueprint Sec 8.5: "recomputed on threshold edit
+        # ... no re-segmentation") still has something to recompute
+        # against even after a threshold edit demotes the Run step.
+        self.last_raw_axons = None
         self.run_in_progress: bool = False
         self.cancel_event: threading.Event = threading.Event()
 
