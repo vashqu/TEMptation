@@ -10,7 +10,6 @@ from pathlib import Path
 
 import pandas as pd
 
-from . import dataio
 from . import discovery
 from . import export
 from . import pipeline
@@ -180,19 +179,8 @@ def resolve_pixel_length(args) -> float:
         )
 
 
-def process_pair(
-    image_id: str,
-    tem_path: Path,
-    mask_path: Path,
-    pixel_length_um: float,
-    args,
-    output_dir: Path,
-    group: str = None,
-) -> tuple:
-    tem = dataio.read_image(tem_path)
-    mask = dataio.read_mask(mask_path)
-
-    seg_cfg = SegmentationConfig(
+def seg_cfg_from_args(args) -> SegmentationConfig:
+    return SegmentationConfig(
         myelin_val=args.myelin_val,
         axoplasm_val=args.axoplasm_val,
         mito_val=args.mito_val,
@@ -209,7 +197,10 @@ def process_pair(
         mito_hole_handling=args.mito_hole_handling,
         mito_assignment=args.mito_assignment,
     )
-    qc_thresholds = QCThresholds(
+
+
+def qc_thresholds_from_args(args) -> QCThresholds:
+    return QCThresholds(
         g_ratio_min=args.g_ratio_min,
         g_ratio_max=args.g_ratio_max,
         axon_circularity_min=args.axon_circularity_min,
@@ -218,73 +209,6 @@ def process_pair(
         min_fiber_area_um2=args.min_fiber_area_um2,
         min_mito_count_for_clustering=args.min_mito_count_for_clustering,
     )
-    df_axons, df_image, labels_ws, resolved_mode, df_mito = pipeline.analyze_image_legacy(
-        tem, mask, pixel_length_um, seg_cfg,
-        reference_myelin_fraction=args.demyelination_reference,
-        qc_thresholds=qc_thresholds,
-        exclude_qc_failed=args.exclude_qc_failed,
-    )
-
-    print(f"  [{resolved_mode.upper()}] id={image_id!r}  "
-          f"→ {len(df_axons)} axons detected")
-
-    # Phase 6: unconditional, even for a 0-row df -- pandas .insert()/
-    # column assignment on a 0-row DataFrame correctly adds the column
-    # (0 rows, right dtype), it just doesn't manufacture any values. A
-    # gate here means a genuinely-processed-but-zero-axon image silently
-    # loses image_id/mode/group/etc. from its (already 0-row) axons.csv
-    # contribution -- verified live: this is exactly the same "unstable
-    # schema" bug as the one fixed in pipeline.py, just one layer up.
-    for df in (df_axons, df_image):
-        if "image_id" not in df.columns:
-            df.insert(0, "image_id", image_id)
-        else:
-            df["image_id"] = image_id
-        if "mode" not in df.columns:
-            df.insert(1, "mode", resolved_mode)
-        else:
-            df["mode"] = resolved_mode
-        # Identity/metadata columns (Phase 2). Appended, not inserted,
-        # so the legacy column positions above are undisturbed -- see
-        # schema.py's note on why the full identity-block-prepend
-        # redesign is deferred to Phase 6.
-        df["group"] = group
-        df["image_path"] = str(tem_path)
-        df["mask_path"] = str(mask_path)
-        df["pixel_size_um"] = pixel_length_um
-        df["schema_version"] = schema.resolve_schema_version(args.mito_hole_handling)
-
-    if getattr(args, "write_mito_csv", False):
-        if not df_mito.empty:
-            df_mito.insert(0, "image_id", image_id)
-            df_mito["group"] = group
-        elif args.mito_assignment == "legacy":
-            print(f"  [WARNING] --write-mito-csv has no effect under "
-                  f"--mito-assignment legacy for id={image_id!r} "
-                  f"(no per-mitochondrion table in that mode).")
-
-    df_qc_report = qc_mod.qc_report(df_axons) if getattr(args, "write_qc_report", False) else pd.DataFrame()
-
-    if args.plot and not df_axons.empty:
-        plot_path = output_dir / f"overlay_{image_id}.png"
-        try:
-            fig = plotting.overlay_figure(
-                tem=tem,
-                mask=mask,
-                labels_ws=labels_ws,
-                df_axons=df_axons,
-                myelin_val=args.myelin_val,
-                axoplasm_val=args.axoplasm_val,
-                mito_val=args.mito_val,
-                title=f"Image {image_id}  [{resolved_mode}]",
-            )
-            plotting.save_overlay(fig, plot_path)
-            plotting.show_overlay_nonblocking(fig)
-        except Exception as plot_exc:
-            print(f"  [WARNING] Plot failed for id={image_id!r}: {plot_exc}")
-            traceback.print_exc()
-
-    return df_axons, df_image, df_mito, df_qc_report
 
 
 def main():
@@ -342,41 +266,54 @@ def main():
         for s in skipped_files:
             print(f"  SKIP: {s.path}  ({s.reason})")
 
-    all_axons = []
-    all_images = []
-    all_mito = []
-    all_qc_reports = []
+    seg_cfg = seg_cfg_from_args(args)
+    qc_thresholds = qc_thresholds_from_args(args)
 
-    for pair in pairs:
-        try:
-            df_axons, df_image, df_mito, df_qc_report = process_pair(
-                image_id=pair["id"],
-                tem_path=pair["tem_path"],
-                mask_path=pair["mask_path"],
-                pixel_length_um=pixel_length_um,
-                args=args,
-                output_dir=output_dir,
-                group=pair.get("group"),
-            )
-            # Phase 6: append unconditionally, even when 0 rows -- both
-            # df_axons and df_image are now always conformed to their
-            # full column set regardless of emptiness (see pipeline.py),
-            # so concatenating an all-empty batch still yields a
-            # correctly-headered, 0-row CSV instead of a columnless one
-            # (the "unstable schema" half of F8).
-            all_axons.append(df_axons)
-            all_images.append(df_image)
-            if not df_mito.empty:
-                all_mito.append(df_mito)
-            if not df_qc_report.empty:
-                all_qc_reports.append(df_qc_report)
-        except Exception as exc:
-            print(f"\n[ERROR] id={pair['id']!r} failed with: {exc}")
-            traceback.print_exc()
-            print()
+    def _on_image_done(i, total, pair, df_axons, df_image, labels_ws, resolved_mode, df_mito, tem, mask):
+        image_id = pair["id"]
+        print(f"  [{resolved_mode.upper()}] id={image_id!r}  "
+              f"→ {len(df_axons)} axons detected")
+        if args.write_mito_csv and df_mito.empty and args.mito_assignment == "legacy":
+            print(f"  [WARNING] --write-mito-csv has no effect under "
+                  f"--mito-assignment legacy for id={image_id!r} "
+                  f"(no per-mitochondrion table in that mode).")
+        if args.plot and not df_axons.empty:
+            plot_path = output_dir / f"overlay_{image_id}.png"
+            try:
+                fig = plotting.overlay_figure(
+                    tem=tem,
+                    mask=mask,
+                    labels_ws=labels_ws,
+                    df_axons=df_axons,
+                    myelin_val=args.myelin_val,
+                    axoplasm_val=args.axoplasm_val,
+                    mito_val=args.mito_val,
+                    title=f"Image {image_id}  [{resolved_mode}]",
+                )
+                plotting.save_overlay(fig, plot_path)
+                plotting.show_overlay_nonblocking(fig)
+            except Exception as plot_exc:
+                print(f"  [WARNING] Plot failed for id={image_id!r}: {plot_exc}")
+                traceback.print_exc()
 
-    df_all_axons = pd.concat(all_axons, ignore_index=True) if all_axons else pd.DataFrame()
-    df_all_images = pd.concat(all_images, ignore_index=True) if all_images else pd.DataFrame()
+    def _on_image_error(i, total, pair, exc, tb_str):
+        print(f"\n[ERROR] id={pair['id']!r} failed with: {exc}")
+        print(tb_str)
+
+    result = pipeline.analyze_dataset(
+        pairs,
+        pixel_length_um=pixel_length_um,
+        seg_cfg=seg_cfg,
+        qc_thresholds=qc_thresholds,
+        exclude_qc_failed=args.exclude_qc_failed,
+        reference_myelin_fraction=args.demyelination_reference,
+        collect_mito=args.write_mito_csv,
+        collect_qc_report=args.write_qc_report,
+        on_image_done=_on_image_done,
+        on_image_error=_on_image_error,
+    )
+    df_all_axons = result.df_axons
+    df_all_images = result.df_image
 
     # --schema legacy: strip down to exactly the pre-refactor column set,
     # in its original order/position -- for downstream scripts that don't
@@ -402,20 +339,18 @@ def main():
     if len(df_all_images) > 0:
         print(f"Image-level summary → {img_csv}  ({len(df_all_images)} rows)")
 
-    df_all_mito = pd.DataFrame()
+    df_all_mito = result.df_mito
     if args.write_mito_csv:
-        if all_mito:
-            df_all_mito = pd.concat(all_mito, ignore_index=True)
+        if not df_all_mito.empty:
             mito_csv = export.write_mito_csv(df_all_mito, output_dir)
             outputs["mitochondria_metrics_csv"] = mito_csv
             print(f"Mitochondria results → {mito_csv}  ({len(df_all_mito)} rows)")
         else:
             print("No mitochondria to write (empty or --mito-assignment legacy).")
 
-    df_all_qc = pd.DataFrame()
+    df_all_qc = result.df_qc_report
     if args.write_qc_report:
-        if all_qc_reports:
-            df_all_qc = pd.concat(all_qc_reports, ignore_index=True)
+        if not df_all_qc.empty:
             qc_csv = export.write_qc_report_csv(df_all_qc, output_dir)
             outputs["qc_report_csv"] = qc_csv
             print(f"QC report            → {qc_csv}  ({len(df_all_qc)} rows)")
@@ -457,6 +392,7 @@ def main():
             "groups": len(df_all_groups),
         },
         exclusion_counts=qc_mod.exclusion_reason_counts(df_all_axons),
+        processing_errors=[{"id": pid, "message": msg} for pid, msg, _tb in result.errors],
     )
     print(f"Run manifest         → {manifest_path}")
 

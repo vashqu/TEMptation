@@ -2,10 +2,14 @@
 reimplement any of the orchestration below (see IMPLEMENTATION_BLUEPRINT.md
 Sec 4.4 for the automated check that enforces this on the GUI)."""
 
+import traceback
+from dataclasses import dataclass, field
+
 import numpy as np
 import pandas as pd
 from skimage.measure import label, regionprops
 
+from . import dataio
 from . import masks as masks_mod
 from . import qc as qc_mod
 from . import segmentation as seg_mod
@@ -15,7 +19,7 @@ from . import metrics_spatial
 from . import summaries
 from .config import QCThresholds, SegmentationConfig
 from .mathutils import safe_aspect_ratio
-from .schema import AXON_COLUMNS_V2, IMAGE_COLUMNS_V2, MITO_COLUMNS, conform
+from .schema import AXON_COLUMNS_V2, IMAGE_COLUMNS_V2, MITO_COLUMNS, conform, resolve_schema_version
 
 
 def analyze_image_legacy(
@@ -383,3 +387,127 @@ def analyze_image_legacy(
     df_image = conform(df_image, [c for c in IMAGE_COLUMNS_V2 if c != "image_id"])
 
     return df_axons, df_image, labels_ws, resolved_mode, df_mito
+
+
+@dataclass
+class DatasetResult:
+    df_axons: pd.DataFrame = field(default_factory=pd.DataFrame)
+    df_image: pd.DataFrame = field(default_factory=pd.DataFrame)
+    df_mito: pd.DataFrame = field(default_factory=pd.DataFrame)
+    df_qc_report: pd.DataFrame = field(default_factory=pd.DataFrame)
+    errors: list = field(default_factory=list)  # [(pair_id, message, traceback_str), ...]
+
+
+def analyze_dataset(
+    pairs,
+    pixel_length_um: float,
+    seg_cfg: SegmentationConfig,
+    qc_thresholds: QCThresholds = None,
+    exclude_qc_failed: bool = False,
+    reference_myelin_fraction: float = None,
+    collect_mito: bool = False,
+    collect_qc_report: bool = False,
+    on_image_done=None,
+    on_image_error=None,
+    cancel_event=None,
+) -> DatasetResult:
+    """Batch orchestration shared by CLI and GUI (Phase 7 prep --
+    IMPLEMENTATION_BLUEPRINT.md Sec 4.3's original "analyze_dataset"
+    contract). For each pair: reads tem/mask, calls analyze_image_legacy,
+    stamps identity/metadata columns (image_id, mode, group, image_path,
+    mask_path, pixel_size_um, schema_version -- moved here from cli.py's
+    former process_pair, since this is shared orchestration, not a
+    CLI-specific concern), and accumulates.
+
+    `on_image_done(index, total, pair, df_axons, df_image, labels_ws,
+    resolved_mode, df_mito, tem, mask)` fires after each successfully
+    processed image. `on_image_error(index, total, pair, exc, traceback_str)`
+    fires on a per-image failure (caught, not fatal to the batch -- matches
+    the original per-pair try/except in cli.py's main()). Neither
+    printing nor plotting happens in this function itself -- cli.py's
+    callback handles --plot and console output; the GUI's callback
+    updates its own progress UI. This keeps analyze_dataset decoupled
+    from what any particular caller wants to do with a per-image result.
+
+    `cancel_event`, if given and set mid-run (anything with an
+    `is_set()` method, typically threading.Event), stops processing
+    further pairs; results already accumulated are kept, not discarded.
+
+    `collect_mito`/`collect_qc_report` gate whether the (otherwise
+    per-image, always computed) mito table / QC report get accumulated
+    into the batch-level DatasetResult -- set False when the caller has
+    no intention of writing/displaying them, to skip the accumulation
+    work on large batches.
+    """
+    all_axons = []
+    all_images = []
+    all_mito = []
+    all_qc_reports = []
+    errors = []
+
+    total = len(pairs)
+    for i, pair in enumerate(pairs):
+        if cancel_event is not None and cancel_event.is_set():
+            break
+        try:
+            tem = dataio.read_image(pair["tem_path"])
+            mask = dataio.read_mask(pair["mask_path"])
+
+            df_axons, df_image, labels_ws, resolved_mode, df_mito = analyze_image_legacy(
+                tem, mask, pixel_length_um, seg_cfg,
+                reference_myelin_fraction=reference_myelin_fraction,
+                qc_thresholds=qc_thresholds,
+                exclude_qc_failed=exclude_qc_failed,
+            )
+
+            image_id = pair["id"]
+            group = pair.get("group")
+            for df in (df_axons, df_image):
+                if "image_id" not in df.columns:
+                    df.insert(0, "image_id", image_id)
+                else:
+                    df["image_id"] = image_id
+                if "mode" not in df.columns:
+                    df.insert(1, "mode", resolved_mode)
+                else:
+                    df["mode"] = resolved_mode
+                df["group"] = group
+                df["image_path"] = str(pair["tem_path"])
+                df["mask_path"] = str(pair["mask_path"])
+                df["pixel_size_um"] = pixel_length_um
+                df["schema_version"] = resolve_schema_version(seg_cfg.mito_hole_handling)
+
+            if collect_mito and not df_mito.empty:
+                df_mito.insert(0, "image_id", image_id)
+                df_mito["group"] = group
+
+            df_qc_report = qc_mod.qc_report(df_axons) if collect_qc_report else pd.DataFrame()
+
+            all_axons.append(df_axons)
+            all_images.append(df_image)
+            if collect_mito and not df_mito.empty:
+                all_mito.append(df_mito)
+            if not df_qc_report.empty:
+                all_qc_reports.append(df_qc_report)
+
+            if on_image_done is not None:
+                on_image_done(i, total, pair, df_axons, df_image, labels_ws, resolved_mode, df_mito, tem, mask)
+
+        except Exception as exc:
+            tb_str = traceback.format_exc()
+            errors.append((pair.get("id", "?"), str(exc), tb_str))
+            if on_image_error is not None:
+                on_image_error(i, total, pair, exc, tb_str)
+
+    df_all_axons = pd.concat(all_axons, ignore_index=True) if all_axons else pd.DataFrame()
+    df_all_images = pd.concat(all_images, ignore_index=True) if all_images else pd.DataFrame()
+    df_all_mito = pd.concat(all_mito, ignore_index=True) if all_mito else pd.DataFrame()
+    df_all_qc_report = pd.concat(all_qc_reports, ignore_index=True) if all_qc_reports else pd.DataFrame()
+
+    return DatasetResult(
+        df_axons=df_all_axons,
+        df_image=df_all_images,
+        df_mito=df_all_mito,
+        df_qc_report=df_all_qc_report,
+        errors=errors,
+    )

@@ -78,13 +78,17 @@ def write_run_manifest(
     outputs: dict,
     row_counts: dict,
     exclusion_counts: dict,
+    processing_errors: list = None,
 ) -> Path:
     """run_manifest.json (CLAUDE.md Sec 16.8, Phase 6): everything needed
     to reproduce or audit a run without re-reading console output --
     config (every CLI argument), package versions, a UTC timestamp, every
     input pair actually processed, every file skipped during discovery,
-    which output files were written and how many rows each has, and a
-    per-rule breakdown of why axons were excluded (qc.exclusion_reason_counts).
+    which output files were written and how many rows each has, a
+    per-rule breakdown of why axons were excluded (qc.exclusion_reason_counts),
+    and any per-image processing errors (pipeline.DatasetResult.errors --
+    a failed image doesn't abort the batch, so this is the only durable
+    record of which images silently contributed nothing).
 
     All values are passed in already-computed rather than recomputed here
     -- this function only serializes; it never re-derives anything, so it
@@ -102,6 +106,7 @@ def write_run_manifest(
         "outputs": {k: str(v) for k, v in outputs.items()},
         "row_counts": row_counts,
         "exclusion_counts": exclusion_counts,
+        "processing_errors": processing_errors or [],
     }
     path = Path(out_dir) / "run_manifest.json"
     _warn_if_exists(path)

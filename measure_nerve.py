@@ -42,7 +42,6 @@ from temptation.plotting import overlay_figure  # noqa: F401,E402
 from temptation.cli import (  # noqa: F401,E402
     build_parser,
     resolve_pixel_length,
-    process_pair,
     main,
 )
 
