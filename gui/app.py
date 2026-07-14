@@ -25,6 +25,7 @@ from .panels import export as export_panel
 from .panels import metrics as metrics_panel
 from .panels import qc as qc_panel
 from .panels import results as results_panel
+from .panels import review as review_panel
 from .state import STEP_IDS, STEP_LABELS, AppState
 from .widgets import (
     BG,
@@ -134,11 +135,31 @@ class TEMptationApp(tk.Tk):
             elif sid == "run":
                 self._build_run_panel(frame)
             elif sid == "review":
-                results_panel.build(frame, self.state_)
+                self._build_review_step(frame)
             elif sid == "export":
                 export_panel.build(frame, self.state_)
             else:
                 self._build_placeholder(frame, sid)
+
+    def _build_review_step(self, frame):
+        """The "⑥ Review" rail step combines two views (blueprint Sec
+        8.6 visual review + Sec 8.7 results dashboard) as tabs, since
+        state.py's STEP_IDS has a single "review" slot for both."""
+        frame.rowconfigure(0, weight=1)
+        nb = ttk.Notebook(frame)
+        nb.grid(row=0, column=0, sticky="nsew")
+
+        dashboard_tab = tk.Frame(nb, bg=BG)
+        dashboard_tab.columnconfigure(0, weight=1)
+        dashboard_tab.rowconfigure(0, weight=1)
+        nb.add(dashboard_tab, text="Dashboard")
+        results_panel.build(dashboard_tab, self.state_)
+
+        inspect_tab = tk.Frame(nb, bg=BG)
+        inspect_tab.columnconfigure(0, weight=1)
+        inspect_tab.rowconfigure(0, weight=1)
+        nb.add(inspect_tab, text="Inspect")
+        review_panel.build(inspect_tab, self.state_)
 
     def _build_placeholder(self, frame, step_id):
         tk.Label(

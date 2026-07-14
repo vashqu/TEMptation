@@ -1,18 +1,20 @@
 """Enforces "no metric logic in the GUI" (IMPLEMENTATION_BLUEPRINT.md
 Sec 4.4). Parses GUI source with ast rather than importing it, so this
-test runs even without a display. Covers both the legacy
-measure_nerve_gui.py and the in-progress gui/ package (Phase 7,
-blueprint Sec 9's Phase 7 checklist: "test_gui_has_no_metrics.py
-extended over gui/") -- every .py file under either surface must stay
-formula-free for the guard to mean anything as the rebuild proceeds."""
+test runs even without a display. Covers the current GUI
+(measure_nerve_gui.py, now a thin gui/app.py launcher, plus the gui/
+package itself) and the retired measure_nerve_gui_legacy.py, kept
+importable during the Phase 7 transition window -- every .py file
+across all three must stay formula-free for the guard to mean
+anything."""
 
 import ast
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).parent.parent
-GUI_FILES = [REPO_ROOT / "measure_nerve_gui.py"] + sorted(
-    (REPO_ROOT / "gui").rglob("*.py")
-)
+GUI_FILES = [
+    REPO_ROOT / "measure_nerve_gui.py",
+    REPO_ROOT / "measure_nerve_gui_legacy.py",
+] + sorted((REPO_ROOT / "gui").rglob("*.py"))
 
 # Functions that perform actual segmentation/measurement work. If any of
 # these show up in the GUI source, formula/logic has leaked out of the

@@ -1,6 +1,9 @@
-"""Constructs the real Tk app and drives a single-image analysis through
-its own internal methods (not synthetic re-implementations), then tears
-it down. Skips gracefully when no display is available (e.g. headless CI)."""
+"""Constructs the real Tk app for the retired pre-Phase-7 GUI
+(measure_nerve_gui_legacy.py, kept importable during the gui/ rebuild's
+transition window) and drives a single-image analysis through its own
+internal methods (not synthetic re-implementations), then tears it
+down. Skips gracefully when no display is available (e.g. headless CI).
+See tests/test_gui2_shell.py for the current gui/app.py GUI."""
 
 import os
 from pathlib import Path
@@ -16,7 +19,7 @@ MASK_PATH = DATA_ROOT / "normal_data" / "162-165" / "163. Mask 20K.tif"
 @pytest.fixture
 def app():
     import tkinter as tk
-    import measure_nerve_gui as gui_mod
+    import measure_nerve_gui_legacy as gui_mod
 
     try:
         instance = gui_mod.NerveApp()

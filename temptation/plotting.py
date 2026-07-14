@@ -64,10 +64,33 @@ def overlay_figure(
     mito_val: int = 128,
     title: str = "",
     interactive_hover: bool = True,
+    show_myelin: bool = True,
+    show_axoplasm: bool = True,
+    show_mito: bool = True,
+    show_boundaries: bool = True,
+    show_axon_ids: bool = True,
+    boundary_colors: dict = None,
+    df_mito=None,
 ):
     """Build the 2-panel TEM + tissue-overlay figure. Returns a Figure;
-    never calls plt.show(). Verbatim geometry/coloring from the original
-    make_plot()."""
+    never calls plt.show(). Geometry/coloring is verbatim from the
+    original make_plot() when every optional argument is left at its
+    default -- CLI behavior and the golden overlay PNGs are unaffected.
+
+    The show_*/boundary_colors/df_mito arguments exist for the GUI's
+    visual review panel (Phase 7d, blueprint Sec 8.6: layer toggles and
+    QC-status boundary coloring) so that panel never has to call
+    find_contours or re-derive the tissue overlay itself -- it only
+    picks which already-computed layer to show and what color an
+    already-computed axon_id's boundary should be.
+
+    boundary_colors: optional {axon_id: matplotlib color}: axon ids not
+    present default to white (unchanged from the original behavior).
+    df_mito: optional per-mitochondrion table (mitochondria_metrics.csv
+    schema) to draw a marker at each mitochondrion's own centroid,
+    sized by its own area -- a finer-grained sub-layer than the
+    tissue-type mito color already baked into build_overlay_rgba.
+    """
     import matplotlib.pyplot as plt
     from matplotlib.lines import Line2D
     from matplotlib.patches import Patch
@@ -90,20 +113,28 @@ def overlay_figure(
         axes[1].format_coord = fmt
 
     overlay = build_overlay_rgba(mask, myelin_val, axoplasm_val, mito_val)
+    if not show_myelin:
+        overlay[mask == myelin_val] = 0
+    if not show_axoplasm:
+        overlay[mask == axoplasm_val] = 0
+    if not show_mito:
+        overlay[mask == mito_val] = 0
     axes[1].imshow(overlay, interpolation="nearest")
 
-    unique_labels = np.unique(labels_ws)
-    unique_labels = unique_labels[unique_labels > 0]
-    for lbl in unique_labels:
-        fiber_bin = (labels_ws == lbl).astype(np.uint8)
-        contours = sk_measure.find_contours(fiber_bin, level=0.5)
-        for contour in contours:
-            axes[1].plot(
-                contour[:, 1], contour[:, 0],
-                color="white", linewidth=0.8, alpha=0.9,
-            )
+    if show_boundaries:
+        unique_labels = np.unique(labels_ws)
+        unique_labels = unique_labels[unique_labels > 0]
+        for lbl in unique_labels:
+            fiber_bin = (labels_ws == lbl).astype(np.uint8)
+            contours = sk_measure.find_contours(fiber_bin, level=0.5)
+            color = "white" if boundary_colors is None else boundary_colors.get(int(lbl), "white")
+            for contour in contours:
+                axes[1].plot(
+                    contour[:, 1], contour[:, 0],
+                    color=color, linewidth=0.8, alpha=0.9,
+                )
 
-    if not df_axons.empty:
+    if show_axon_ids and not df_axons.empty:
         for _, row in df_axons.iterrows():
             axes[1].text(
                 row["centroid_x_px"], row["centroid_y_px"],
@@ -112,6 +143,13 @@ def overlay_figure(
                 fontweight="bold",
                 bbox=dict(boxstyle="round,pad=0.15", fc="black", alpha=0.45, lw=0),
             )
+
+    if df_mito is not None and not df_mito.empty and {"centroid_x_px", "centroid_y_px", "area_px"}.issubset(df_mito.columns):
+        sizes = np.clip(df_mito["area_px"].to_numpy(dtype=float), 4, 200)
+        axes[1].scatter(
+            df_mito["centroid_x_px"], df_mito["centroid_y_px"],
+            s=sizes, facecolors="none", edgecolors="yellow", linewidths=0.6, alpha=0.85,
+        )
 
     legend_elements = [
         Patch(facecolor=MYELIN_RGBA[:3], alpha=0.8, label="Myelin"),
