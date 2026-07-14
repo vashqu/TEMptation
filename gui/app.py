@@ -21,8 +21,10 @@ from temptation import pipeline
 
 from .panels import calibration as calibration_panel
 from .panels import dataset as dataset_panel
+from .panels import export as export_panel
 from .panels import metrics as metrics_panel
 from .panels import qc as qc_panel
+from .panels import results as results_panel
 from .state import STEP_IDS, STEP_LABELS, AppState
 from .widgets import (
     BG,
@@ -131,6 +133,10 @@ class TEMptationApp(tk.Tk):
                 qc_panel.build(frame, self.state_)
             elif sid == "run":
                 self._build_run_panel(frame)
+            elif sid == "review":
+                results_panel.build(frame, self.state_)
+            elif sid == "export":
+                export_panel.build(frame, self.state_)
             else:
                 self._build_placeholder(frame, sid)
 

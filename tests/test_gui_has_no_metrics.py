@@ -31,6 +31,10 @@ ALLOWED_TEMPTATION_SUBMODULES = {
     # preview can never drift from what a real Run would compute; that
     # is reuse, not the reimplementation this guard exists to catch.
     "qc",
+    # summaries.summarize_groups is the same backend function cli.py
+    # calls for --write-group-csv; the export panel calls it to write
+    # group_metrics.csv and to estimate its row count for the checklist.
+    "summaries",
 }
 
 

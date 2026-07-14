@@ -139,6 +139,64 @@ def test_gui2_metrics_scan_detects_myelin_presence(app):
     assert "available" in status_var.get()
 
 
+def test_gui2_results_and_export_after_real_run(app, tmp_path):
+    """Drive a real run through the GUI, then build the results
+    dashboard (exercising the matplotlib boxplot/jitter path) and the
+    export panel, and actually click Export -- confirming the checklist
+    writes real files via temptation.export, not a GUI-side
+    reimplementation."""
+    import tkinter as tk
+
+    from temptation import discovery
+
+    from gui.panels import export as export_panel
+    from gui.panels import results as results_panel
+    from gui.state import GroupEntry
+
+    entry = GroupEntry(name="normal")
+    pairs, _ = discovery._scan_folder_recursive(NORMAL_DIR)
+    entry.pairs = pairs
+    app.state_.groups["normal"] = entry
+    app.state_.output_dir = tmp_path
+    app.state_.pixel_size_um = 0.00524
+
+    app._on_run()
+    deadline = time.time() + 30
+
+    def _poll():
+        if app.state_.run_in_progress and time.time() < deadline:
+            app.after(50, _poll)
+        else:
+            app.quit()
+
+    app.after(50, _poll)
+    app.mainloop()
+    assert app.state_.result is not None
+
+    results_panel.build(tk.Frame(app), app.state_)
+
+    export_frame = tk.Frame(app)
+    export_panel.build(export_frame, app.state_)
+
+    def _find_button(widget):
+        if isinstance(widget, tk.Button) and widget.cget("text") == "Export files":
+            return widget
+        for child in widget.winfo_children():
+            found = _find_button(child)
+            if found is not None:
+                return found
+        return None
+
+    export_btn = _find_button(export_frame)
+    assert export_btn is not None
+    assert str(export_btn.cget("state")) == "normal"
+    export_btn.invoke()
+
+    assert (tmp_path / "axons.csv").exists()
+    assert (tmp_path / "image_summary.csv").exists()
+    assert (tmp_path / "run_manifest.json").exists()
+
+
 def test_gui2_metrics_and_qc_panels_build_with_prior_run_data(app):
     """Building the metrics/QC panels with a populated dataset and a
     prior run's raw axons exercises the mask-scan setup and the QC
