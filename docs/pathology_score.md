@@ -6,6 +6,15 @@
 > dataclasses only — they aren't read by anything yet. This document describes the
 > plan so a future implementer (human or model) has the design decided in advance,
 > and so this feature is never accidentally presented as more validated than it is.
+>
+> **Explicitly reviewed and deferred during Phase 9 validation** (`docs/validation_report.md`
+> §5–6): only 3 of the 6 intended components (`g_ratio_high`, `g_ratio_low`,
+> `low_circularity`) have real calibrated thresholds; none of the other 3 gained one
+> from real-data inspection, and `high_mito_occupancy` in particular showed the
+> *opposite* of its assumed direction on this dataset (pathological mean lower than
+> normal). Building a v0 from just the 3 usable, non-mitochondrial components was
+> considered and declined — reassess once more components are calibrated, not by
+> shipping a partial score early.
 
 ## The one thing that must never change about this feature
 
