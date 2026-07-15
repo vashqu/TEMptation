@@ -1,10 +1,18 @@
-"""QC panel (blueprint Sec 8.5): threshold fields reflected from
-config.QCThresholds (a new threshold field there gets a GUI row with no
-GUI edit), plus a live preview of flag counts recomputed via
-temptation.qc.compute_qc_flags -- against the last run's already-computed
-raw per-axon metrics, never by re-segmenting and never by
+"""QC sub-tab of the "Setup" step (blueprint Sec 8.5): threshold fields
+reflected from config.QCThresholds (a new threshold field there gets a
+GUI row with no GUI edit), plus a live preview of flag counts
+recomputed via temptation.qc.compute_qc_flags -- against the last run's
+already-computed raw per-axon metrics (state.result.df_axons, which
+survives later parameter edits -- see gui/state.py's
+mark_inputs_changed), never by re-segmenting and never by
 reimplementing a flag rule here (that recomputation is the entire
-reason "qc" is an approved temptation submodule for this panel)."""
+reason "qc" is an approved temptation submodule for this panel).
+
+Threshold edits are debounced: committing state.qc_thresholds (and so
+calling mark_inputs_changed()/notify()) on every keystroke used to
+cascade into every listener across the app -- rebuilding the dashboard
+figure, the export checklist, etc. -- dozens of times while typing a
+single number."""
 
 import dataclasses
 import tkinter as tk
@@ -13,7 +21,7 @@ from tkinter import ttk
 from temptation import qc as qc_mod
 from temptation.config import QCThresholds
 
-from ..widgets import CARD_BG, LBL_FG, WARN_FG, make_card
+from ..widgets import CARD_BG, LBL_FG, debounce, make_card
 
 
 def build(parent, state):
@@ -55,8 +63,9 @@ def build(parent, state):
         state.mark_inputs_changed()
         _refresh_preview()
 
+    debounced_apply = debounce(inner, 400, _apply)
     for name, (var, _t) in entries.items():
-        var.trace_add("write", lambda *_a: _apply())
+        var.trace_add("write", lambda *_a: debounced_apply())
 
     cb = ttk.Checkbutton(
         inner, text="Exclude QC-failed objects from image summaries",
@@ -74,9 +83,9 @@ def build(parent, state):
              justify="left", anchor="w", font=("TkDefaultFont", 9)).pack(anchor="w")
 
     def _refresh_preview():
-        df = state.last_raw_axons
+        df = state.result.df_axons if state.result is not None else None
         if df is None or df.empty:
-            preview_var.set("Run analysis once (⑤ Run) to see a live QC preview here.")
+            preview_var.set("Run analysis once (① Setup) to see a live QC preview here.")
             return
         flagged = qc_mod.compute_qc_flags(df, state.qc_thresholds)
         qc_cols = [c for c in flagged.columns if c.startswith("qc_")]

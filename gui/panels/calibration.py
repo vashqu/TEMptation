@@ -1,14 +1,21 @@
-"""Calibration panel (blueprint Sec 8.3): a single pixel-size field with
-a derived readout, and the pixel-space-only escape hatch (CLAUDE.md
-Sec 16.3 -- the user must not be able to run calibrated metrics without
-either a pixel size or an explicit opt-out). The `1/value` readout below
-is a display convenience the user typed the input for, not a derived
-biological metric, so it stays out of the temptation package."""
+"""Calibration sub-tab of the "Setup" step (blueprint Sec 8.3): a single
+pixel-size field with a derived readout, and the pixel-space-only
+escape hatch (CLAUDE.md Sec 16.3 -- the user must not be able to run
+calibrated metrics without either a pixel size or an explicit opt-out).
+The `1/value` readout below is a display convenience the user typed
+the input for, not a derived biological metric, so it stays out of the
+temptation package.
+
+The derived readout/state.pixel_size_um update on every keystroke
+(cheap, local), but the state.mark_inputs_changed() call -- which
+fans out to every panel's state.on_change listener -- is debounced, so
+typing a pixel size doesn't repeatedly demote the rail and rebuild the
+dashboard/export checklist mid-keystroke."""
 
 import tkinter as tk
 from tkinter import ttk
 
-from ..widgets import CARD_BG, ERROR_FG, LBL_FG, Tooltip, make_card
+from ..widgets import CARD_BG, ERROR_FG, LBL_FG, Tooltip, debounce, make_card
 
 
 def build(parent, state):
@@ -38,28 +45,28 @@ def build(parent, state):
     tk.Label(inner, textvariable=error_var, bg=CARD_BG, fg=ERROR_FG,
              font=("TkDefaultFont", 9)).grid(row=2, column=0, columnspan=2, sticky="w")
 
+    debounced_notify = debounce(entry, 400, state.mark_inputs_changed)
+
     def _on_pixel_change(*_a):
         text = pixel_var.get().strip()
         if not text:
             state.pixel_size_um = None
             derived_var.set("")
             error_var.set("")
-            state.mark_inputs_changed()
-            return
-        try:
-            value = float(text)
-            if not value > 0:
-                raise ValueError
-        except ValueError:
-            state.pixel_size_um = None
-            derived_var.set("")
-            error_var.set("Pixel size must be a positive number.")
-            state.mark_inputs_changed()
-            return
-        state.pixel_size_um = value
-        error_var.set("")
-        derived_var.set(f"1 µm ≈ {1 / value:.1f} px")
-        state.mark_inputs_changed()
+        else:
+            try:
+                value = float(text)
+                if not value > 0:
+                    raise ValueError
+            except ValueError:
+                state.pixel_size_um = None
+                derived_var.set("")
+                error_var.set("Pixel size must be a positive number.")
+            else:
+                state.pixel_size_um = value
+                error_var.set("")
+                derived_var.set(f"1 µm ≈ {1 / value:.1f} px")
+        debounced_notify()
 
     entry.bind("<KeyRelease>", _on_pixel_change)
     _on_pixel_change()

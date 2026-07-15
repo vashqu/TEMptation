@@ -86,6 +86,24 @@ def make_card(parent, title: str, **grid_kw) -> tuple[tk.Frame, tk.Frame]:
     return outer, inner
 
 
+def debounce(widget: tk.Misc, delay_ms: int, callback):
+    """Returns a wrapper that delays `callback` by delay_ms, canceling
+    any pending call from a previous invocation. Bind the wrapper to a
+    per-keystroke event (KeyRelease, a StringVar trace) instead of
+    `callback` directly so rapid typing collapses into one call after a
+    pause, rather than firing state.notify() -- and every listener it
+    cascades to -- on every keystroke (the dominant cause of the GUI's
+    Setup-tab sluggishness before this existed)."""
+    pending = {"id": None}
+
+    def _debounced(*args, **kwargs):
+        if pending["id"] is not None:
+            widget.after_cancel(pending["id"])
+        pending["id"] = widget.after(delay_ms, lambda: callback(*args, **kwargs))
+
+    return _debounced
+
+
 def apply_base_styles(root: tk.Tk) -> ttk.Style:
     s = ttk.Style(root)
     try:

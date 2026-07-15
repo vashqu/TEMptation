@@ -13,23 +13,22 @@ from typing import Callable, Optional
 
 from temptation.config import QCThresholds, SegmentationConfig
 
-STEP_IDS = ["dataset", "calibration", "metrics", "qc", "run", "review", "export"]
+STEP_IDS = ["setup", "review", "export"]
 
 STEP_LABELS = {
-    "dataset": "① Load data",
-    "calibration": "② Calibrate",
-    "metrics": "③ Metrics",
-    "qc": "④ QC",
-    "run": "⑤ Run",
-    "review": "⑥ Review",
-    "export": "⑦ Export",
+    "setup": "① Setup",
+    "review": "② Review",
+    "export": "③ Export",
 }
 
-# Any edit to an upstream step invalidates a previous run's results
-# (blueprint Sec 8.1: "Any change to ①-④ demotes ⑤-⑦ to not started,
-# and greys the Export button, so results can never be attributed to
-# the wrong parameters").
-DOWNSTREAM_OF_INPUTS = ["run", "review", "export"]
+# Any edit to an input (data/calibration/segmentation/QC, all now living
+# inside the single "setup" step) marks a previous run's results stale
+# (blueprint Sec 8.1's "results can never be attributed to the wrong
+# parameters", adapted after the 7-step -> 3-step reorg: rather than
+# nulling `result` outright -- which used to blank the dashboard/export
+# checklist mid-keystroke, see AppState.mark_inputs_changed below --
+# this only demotes the rail glyph and flips `result_stale`).
+DOWNSTREAM_OF_INPUTS = ["review", "export"]
 
 
 @dataclass
@@ -56,14 +55,19 @@ class AppState:
         self.qc_thresholds: QCThresholds = QCThresholds()
         self.exclude_qc_failed: bool = False
         self.collect_mito: bool = False
+        # Default off: `mode` (the per-image auto-detected segmentation
+        # algorithm) is easily mistaken for the `group` label -- see
+        # gui/panels/metrics.py's _build_mode_selector -- so it's opt-in
+        # in exports rather than a column every user has to explain away.
+        self.include_mode_column: bool = False
 
         self.result = None  # temptation.pipeline.DatasetResult, once a run completes
-        # Raw per-axon metrics from the last completed run, kept around
-        # independent of `result`/mark_inputs_changed() so the QC panel's
-        # live preview (blueprint Sec 8.5: "recomputed on threshold edit
-        # ... no re-segmentation") still has something to recompute
-        # against even after a threshold edit demotes the Run step.
-        self.last_raw_axons = None
+        # True once an input (data/calibration/segmentation/QC) has been
+        # edited since `result` was produced. Panels showing `result`
+        # (dashboard, export checklist, QC live preview) keep displaying
+        # it -- edits no longer null it out -- but show a staleness note
+        # so the user knows a fresh Run would reflect the new parameters.
+        self.result_stale: bool = False
         self.run_in_progress: bool = False
         self.cancel_event: threading.Event = threading.Event()
 
@@ -96,5 +100,6 @@ class AppState:
     def mark_inputs_changed(self) -> None:
         for sid in DOWNSTREAM_OF_INPUTS:
             self.step_status[sid] = "not_started"
-        self.result = None
+        if self.result is not None:
+            self.result_stale = True
         self.notify()

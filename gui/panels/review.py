@@ -14,7 +14,19 @@ already-computed axon_id's boundary should be, and does simple
 nearest-centroid click hit-testing (generic UI geometry, not a
 biological formula). That is why plotting.overlay_figure gained
 show_*/boundary_colors/df_mito parameters in this same phase, instead
-of this panel calling skimage.measure.find_contours itself."""
+of this panel calling skimage.measure.find_contours itself.
+
+Layout note: overlay_figure()'s default figsize (16, 7) is sized for
+its own popup window, not this 3-column embed (list | canvas |
+inspector). Passed straight through, the canvas's natural width
+crowded the list/inspector columns down to near-zero once an image
+loaded -- the actual cause of "the image list disappears after I pick
+one" (the matplotlib toolbar's Home/Back/Forward buttons some users
+then reach for are pan/zoom-history controls, unrelated to switching
+images -- clicking them doing nothing is expected once the list is
+gone, not a separate bug). Fixed here with a smaller figsize plus
+minsize on the outer columns; Previous/Next buttons give a second,
+layout-independent way to change images."""
 
 import tkinter as tk
 from tkinter import ttk
@@ -30,7 +42,12 @@ QC_BOUNDARY_COLOR = {"normal": "#AAAAAA", "flagged": "#F6AD55", "excluded": ERRO
 
 
 def build(parent, state):
+    # minsize on the outer columns is the actual fix for the "image list
+    # disappears" bug: without it, the center canvas's natural width
+    # (matplotlib's default figsize) squeezed columns 0/2 toward zero.
+    parent.columnconfigure(0, minsize=190)
     parent.columnconfigure(1, weight=1)
+    parent.columnconfigure(2, minsize=230)
     parent.rowconfigure(0, weight=1)
 
     current = {"pair": None, "df_axons": None, "df_mito": None,
@@ -51,6 +68,9 @@ def build(parent, state):
 
     toggles_row = tk.Frame(center, bg=parent["bg"])
     toggles_row.grid(row=0, column=0, sticky="w", pady=(0, 6))
+
+    nav_row = tk.Frame(center, bg=parent["bg"])
+    nav_row.grid(row=0, column=0, sticky="e", pady=(0, 6))
 
     layer_vars = {
         "show_myelin": tk.BooleanVar(value=True),
@@ -155,11 +175,17 @@ def build(parent, state):
         from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
         from temptation import plotting
 
-        for w in canvas_frame.winfo_children():
-            w.destroy()
+        # Close the previous figure via pyplot BEFORE destroying its Tk
+        # widgets, not after -- matplotlib's Tk backend manager tears
+        # down its own canvas/toolbar association on close(), and doing
+        # that against an already-.destroy()'d widget is exactly the
+        # kind of ordering bug that manifests as "the second time I do
+        # this, nothing happens" rather than a clean crash.
         if canvas_holder["fig"] is not None:
             import matplotlib.pyplot as plt
             plt.close(canvas_holder["fig"])
+        for w in canvas_frame.winfo_children():
+            w.destroy()
 
         fig = plotting.overlay_figure(
             current["tem"], current["mask"], current["labels_ws"], current["df_axons"],
@@ -173,6 +199,7 @@ def build(parent, state):
             show_axon_ids=layer_vars["show_axon_ids"].get(),
             boundary_colors=_boundary_colors(),
             df_mito=current["df_mito"] if show_mito_sublayer.get() else None,
+            figsize=(9, 5.5),
         )
 
         canvas = FigureCanvasTkAgg(fig, master=canvas_frame)
@@ -218,11 +245,37 @@ def build(parent, state):
             return
         _load_and_render(pairs[sel[0]])
 
+    def _select_index(delta: int):
+        """Mouse-only Previous/Next -- deliberately not bound to arrow
+        keys via bind_all, which would hijack cursor movement in every
+        Entry field elsewhere in the app. A layout-independent way to
+        change images, on top of the list-visibility fix above."""
+        pairs = getattr(listbox, "_pairs", [])
+        if not pairs:
+            return
+        if current["pair"] is None:
+            idx = 0
+        else:
+            try:
+                idx = pairs.index(current["pair"])
+            except ValueError:
+                idx = 0
+            idx = max(0, min(len(pairs) - 1, idx + delta))
+        listbox.selection_clear(0, tk.END)
+        listbox.selection_set(idx)
+        listbox.see(idx)
+        _load_and_render(pairs[idx])
+
     def _refresh():
         _populate_image_list()
 
     # ---------------------------------------------------------- wire it up
     listbox.bind("<<ListboxSelect>>", _on_select)
+
+    ttk.Button(nav_row, text="◀ Previous", style="Ghost.TButton",
+               command=lambda: _select_index(-1)).pack(side="left", padx=(0, 6))
+    ttk.Button(nav_row, text="Next ▶", style="Ghost.TButton",
+               command=lambda: _select_index(1)).pack(side="left")
 
     for text, var in [
         ("Myelin", layer_vars["show_myelin"]), ("Axoplasm", layer_vars["show_axoplasm"]),

@@ -71,6 +71,7 @@ def overlay_figure(
     show_axon_ids: bool = True,
     boundary_colors: dict = None,
     df_mito=None,
+    figsize: tuple = (16, 7),
 ):
     """Build the 2-panel TEM + tissue-overlay figure. Returns a Figure;
     never calls plt.show(). Geometry/coloring is verbatim from the
@@ -78,11 +79,19 @@ def overlay_figure(
     default -- CLI behavior and the golden overlay PNGs are unaffected.
 
     The show_*/boundary_colors/df_mito arguments exist for the GUI's
-    visual review panel (Phase 7d, blueprint Sec 8.6: layer toggles and
-    QC-status boundary coloring) so that panel never has to call
-    find_contours or re-derive the tissue overlay itself -- it only
-    picks which already-computed layer to show and what color an
-    already-computed axon_id's boundary should be.
+    visual review panel (blueprint Sec 8.6: layer toggles and QC-status
+    boundary coloring) so that panel never has to call find_contours or
+    re-derive the tissue overlay itself -- it only picks which
+    already-computed layer to show and what color an already-computed
+    axon_id's boundary should be.
+
+    figsize defaults to the original (16, 7) -- sized for this
+    function's own popup window (CLI --plot, legacy GUI). The Inspect
+    panel embeds this figure inside a 3-column layout (image list |
+    canvas | axon inspector) and passes a smaller figsize; at the
+    default size the canvas's natural width there crowded the outer
+    columns down to near-zero, which is why the image list appeared to
+    "disappear" once an image was loaded.
 
     boundary_colors: optional {axon_id: matplotlib color}: axon ids not
     present default to white (unchanged from the original behavior).
@@ -96,7 +105,7 @@ def overlay_figure(
     from matplotlib.patches import Patch
     from skimage import measure as sk_measure
 
-    fig, axes = plt.subplots(1, 2, figsize=(16, 7))
+    fig, axes = plt.subplots(1, 2, figsize=figsize)
     fig.suptitle(title, fontsize=13)
 
     axes[0].imshow(tem, cmap="gray", interpolation="nearest")

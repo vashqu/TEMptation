@@ -1,9 +1,18 @@
-"""Results dashboard (blueprint Sec 8.7), rendered into the "review"
-rail step's frame -- Phase 7d adds a per-image visual inspector as a
-second view alongside this one within the same step. Summary cards and
-a group-comparison boxplot+jitter strip, reading already-computed
-columns from the last run's DataFrames; matplotlib's own boxplot/
-scatter draw the statistics, nothing here computes a metric."""
+"""Results dashboard (blueprint Sec 8.7), the "Dashboard" tab of the
+"② Review" step (alongside the per-image visual inspector in
+review.py). Summary cards and a group-comparison boxplot+jitter strip,
+reading already-computed columns from the last run's DataFrames;
+matplotlib's own boxplot/scatter draw the statistics, nothing here
+computes a metric.
+
+The matplotlib figure is only rebuilt when state.result's identity
+actually changes (tracked via `last_seen`), not on every
+state.on_change() firing -- unrelated edits elsewhere in Setup (a QC
+threshold keystroke, say) no longer force a matplotlib rebuild here,
+since Phase-7-followup made those edits survive without nulling
+`result` (see gui/state.py's mark_inputs_changed). A stale-results
+banner (rather than blanking the dashboard) tells the user when the
+last run's numbers may not reflect the current parameters."""
 
 import tkinter as tk
 
@@ -32,30 +41,51 @@ def build(parent, state):
     parent.rowconfigure(2, weight=1)
 
     status_var = tk.StringVar(value="")
-    tk.Label(parent, textvariable=status_var, bg=parent["bg"], fg=LBL_FG,
-             justify="left", anchor="w").grid(row=0, column=0, sticky="w", pady=(0, 10))
+    status_label = tk.Label(parent, textvariable=status_var, bg=parent["bg"], fg=LBL_FG,
+                             justify="left", anchor="w")
+    status_label.grid(row=0, column=0, sticky="w", pady=(0, 10))
 
     cards_outer, cards_inner = make_card(parent, "Summary")
-    cards_outer.grid(row=1, column=0, sticky="ew", pady=(0, 12))
+    cards_outer.grid(row=1, column=0, sticky="ew", pady=(0, 6))
 
     plot_outer, plot_inner = make_card(parent, "Group comparison")
     plot_outer.grid(row=2, column=0, sticky="nsew")
     plot_outer.grid_rowconfigure(0, weight=1)
 
     canvas_holder = {"canvas": None}
+    last_seen = {"result": None}
+
+    def _set_status(text: str):
+        if text:
+            status_var.set(text)
+            status_label.grid()
+        else:
+            status_var.set("")
+            status_label.grid_remove()
 
     def _refresh():
+        result = state.result
+        if result is None or result.df_axons.empty:
+            _set_status("Run analysis first (① Setup) to see results here.")
+            cards_outer.grid_remove()
+            plot_outer.grid_remove()
+            return
+
+        cards_outer.grid()
+        plot_outer.grid()
+        _set_status(
+            "⚠ Parameters changed since this run — showing the last completed run's results."
+            if state.result_stale else ""
+        )
+
+        if result is last_seen["result"]:
+            return  # only the (cheap) staleness text changed; skip the matplotlib rebuild
+        last_seen["result"] = result
+
         for w in cards_inner.winfo_children():
             w.destroy()
         for w in plot_inner.winfo_children():
             w.destroy()
-
-        result = state.result
-        if result is None or result.df_axons.empty:
-            status_var.set("Run analysis first (⑤ Run) to see results here.")
-            return
-        status_var.set("")
-
         _build_summary_cards(cards_inner, result.df_axons, result.df_image)
         _build_group_comparison(plot_inner, result.df_axons, result.df_image, canvas_holder)
 
@@ -96,7 +126,7 @@ def _build_group_comparison(parent, df_axons, df_image, canvas_holder):
     from matplotlib.figure import Figure
 
     if "group" not in df_axons.columns or df_axons["group"].dropna().empty:
-        tk.Label(parent, text="No group labels present -- assign groups in ① Load data.",
+        tk.Label(parent, text="No group labels present -- assign groups in ① Setup → Data.",
                  bg=CARD_BG, fg="#999999").pack(anchor="w")
         return
 

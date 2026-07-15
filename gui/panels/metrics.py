@@ -1,14 +1,21 @@
-"""Metric selection panel (blueprint Sec 8.4): seven informational cards
-plus an advanced accordion of SegmentationConfig fields, reflected from
-the dataclass so a new field there gets a GUI row with no GUI edit.
+"""Segmentation sub-tab of the "Setup" step (blueprint Sec 8.4): a
+prominent segmentation-mode selector, seven informational metric cards,
+and an advanced accordion of the remaining SegmentationConfig fields,
+reflected from the dataclass so a new field there gets a GUI row with
+no GUI edit.
 
 The backend always computes every metric a loaded mask's compartments
 support -- there is no per-metric compute toggle to wire up. What this
-panel actually controls is (a) whether mitochondria_metrics.csv gets
-collected during Run (state.collect_mito, the one real "advanced
-mitochondrial metrics" switch CLAUDE.md Sec 16.4 asks for) and (b)
-mask-availability gating, so a card for metrics a group's masks can't
-support is visibly explained rather than just silently full of NaN.
+panel actually controls is (a) the segmentation mode
+(state.seg_cfg.mode -- see _build_mode_selector, promoted out of the
+generic accordion since it's easily confused with the "group" label:
+`mode` is the per-image auto-detected algorithm choice, resolved
+independently per image from myelin pixel count, not a property of
+which folder/group an image was loaded from), (b) whether
+mitochondria_metrics.csv gets collected during Run (state.collect_mito),
+and (c) mask-availability gating, so a card for metrics a group's masks
+can't support is visibly explained rather than just silently full of
+NaN.
 
 Mask scanning is an explicit "Scan mask availability" button rather
 than something re-run on every state change -- re-reading every mask
@@ -35,6 +42,17 @@ METRIC_CARDS = [
     ("Image-level summaries", (), "Writes image_summary.csv with per-image aggregates.", True),
 ]
 
+# (SegmentationConfig.mode value, dropdown label). "auto" resolves each
+# image independently by myelin pixel count vs. myelin_threshold_px
+# (temptation/segmentation.py:resolve_mode) -- forcing "normal"/
+# "pathological" segments every loaded image the same way regardless
+# of what's actually in its mask.
+MODE_OPTIONS = [
+    ("auto", "Auto-detect (recommended)"),
+    ("normal", "Control (myelin present)"),
+    ("pathological", "Pathology (no myelin)"),
+]
+
 
 def build(parent, state):
     parent.columnconfigure(0, weight=1)
@@ -49,6 +67,8 @@ def build(parent, state):
         wraplength=640, justify="left",
     ).grid(row=0, column=0, sticky="w", pady=(0, 10))
 
+    _build_mode_selector(parent, state)
+
     collect_mito_var = tk.BooleanVar(value=state.collect_mito)
 
     def _on_collect_mito_toggle():
@@ -58,10 +78,10 @@ def build(parent, state):
     ttk.Checkbutton(
         parent, text="Collect mitochondria_metrics.csv (one row per mitochondrion) during Run",
         style="Card.TCheckbutton", variable=collect_mito_var, command=_on_collect_mito_toggle,
-    ).grid(row=1, column=0, sticky="w", pady=(0, 12))
+    ).grid(row=2, column=0, sticky="w", pady=(0, 12))
 
     scan_row = tk.Frame(parent, bg=parent["bg"])
-    scan_row.grid(row=2, column=0, sticky="w", pady=(0, 12))
+    scan_row.grid(row=3, column=0, sticky="w", pady=(0, 12))
     availability_var = tk.StringVar(value="Mask availability not checked yet.")
     ttk.Button(scan_row, text="Scan mask availability", style="Ghost.TButton",
                command=lambda: _scan(state, availability_var, card_widgets)).pack(side="left")
@@ -69,7 +89,7 @@ def build(parent, state):
              font=("TkDefaultFont", 9)).pack(side="left", padx=(10, 0))
 
     cards_frame = tk.Frame(parent, bg=parent["bg"])
-    cards_frame.grid(row=3, column=0, sticky="ew")
+    cards_frame.grid(row=4, column=0, sticky="ew")
     cards_frame.columnconfigure((0, 1), weight=1)
 
     card_widgets = {}
@@ -86,6 +106,40 @@ def build(parent, state):
         card_widgets[title] = (status_var, status_lbl, required, always_on)
 
     _build_advanced_accordion(parent, state)
+
+
+def _build_mode_selector(parent, state):
+    outer, inner = make_card(parent, "Segmentation mode")
+    outer.grid(row=1, column=0, sticky="ew", pady=(0, 12))
+    inner.columnconfigure(1, weight=1)
+
+    tk.Label(
+        inner,
+        text=("Auto-detect classifies each image independently by its own "
+              "myelin pixel count -- it is not the same as the 'group' label "
+              "assigned in the Data tab, and images in the same group can "
+              "resolve to different modes. Force Control or Pathology to "
+              "segment every loaded image the same way regardless of what's "
+              "actually in its mask."),
+        bg=CARD_BG, fg="#999999", font=("TkDefaultFont", 8),
+        wraplength=560, justify="left",
+    ).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 8))
+
+    label_by_value = dict(MODE_OPTIONS)
+    value_by_label = {label: value for value, label in MODE_OPTIONS}
+    mode_var = tk.StringVar(value=label_by_value.get(state.seg_cfg.mode, label_by_value["auto"]))
+
+    combo = ttk.Combobox(
+        inner, textvariable=mode_var, state="readonly",
+        values=[label for _, label in MODE_OPTIONS], width=28,
+    )
+    combo.grid(row=1, column=0, sticky="w")
+
+    def _on_mode_change(_event=None):
+        state.seg_cfg = dataclasses.replace(state.seg_cfg, mode=value_by_label[mode_var.get()])
+        state.mark_inputs_changed()
+
+    combo.bind("<<ComboboxSelected>>", _on_mode_change)
 
 
 def _scan(state, availability_var, card_widgets):
@@ -130,11 +184,14 @@ def _scan(state, availability_var, card_widgets):
 
 
 def _build_advanced_accordion(parent, state):
+    """Reflects every SegmentationConfig field except `mode`, which has
+    its own prominent selector above (_build_mode_selector) -- listing
+    it twice would invite the two controls to disagree."""
     outer, inner = make_card(parent, "Advanced segmentation parameters")
-    outer.grid(row=4, column=0, sticky="ew", pady=(14, 0))
+    outer.grid(row=5, column=0, sticky="ew", pady=(14, 0))
     inner.columnconfigure(1, weight=1)
 
-    fields = dataclasses.fields(SegmentationConfig)
+    fields = [f for f in dataclasses.fields(SegmentationConfig) if f.name != "mode"]
     entries = {}
     for i, f in enumerate(fields):
         current = getattr(state.seg_cfg, f.name)
@@ -148,7 +205,11 @@ def _build_advanced_accordion(parent, state):
     error_var = tk.StringVar(value="")
 
     def _apply():
-        kwargs = {}
+        # `mode` isn't among `entries` (it has its own selector above),
+        # so it must be carried forward explicitly -- constructing
+        # SegmentationConfig(**kwargs) without it would silently reset
+        # the user's mode choice back to the dataclass default ("auto").
+        kwargs = {"mode": state.seg_cfg.mode}
         bad = []
         for name, (var, orig_type) in entries.items():
             text = var.get().strip()

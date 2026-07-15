@@ -5,10 +5,11 @@ temptation.pipeline.analyze_dataset. This module and the panels it
 imports must never compute a metric (enforced by
 tests/test_gui_has_no_metrics.py, extended over this package).
 
-Phase 7a scope (blueprint Sec 9, Phase 7 risk note: "land the rail +
-dataset + calibration + run first; review/dashboard second"): steps
-Metrics/QC/Review/Export are placeholders here, filled in by Phase
-7b-7d without touching this file's rail/run wiring.
+Post-launch revision: real usage collapsed the original 7-step rail
+(Load data/Calibrate/Metrics/QC/Run/Review/Export) into 3
+(Setup/Review/Export) -- Setup bundles the first four as sub-tabs with
+Run pinned below, since Run needs none of those tabs' widgets, only
+what's already on `state` by the time it's clicked.
 """
 
 import threading
@@ -59,7 +60,7 @@ class TEMptationApp(tk.Tk):
         self.state_ = AppState()
 
         apply_base_styles(self)
-        self._current_step = "dataset"
+        self._current_step = "setup"
         self._rail_buttons: dict[str, tk.Button] = {}
         self._panel_frames: dict[str, tk.Frame] = {}
 
@@ -70,7 +71,7 @@ class TEMptationApp(tk.Tk):
         self.state_.on_change(self._refresh_rail)
         self.state_.on_change(self._refresh_run_summary)
 
-        self._select_step("dataset")
+        self._select_step("setup")
         self._refresh_rail()
         self._refresh_run_summary()
 
@@ -124,27 +125,50 @@ class TEMptationApp(tk.Tk):
             frame.grid(row=0, column=0, sticky="nsew")
             self._panel_frames[sid] = frame
 
-            if sid == "dataset":
-                dataset_panel.build(frame, self.state_)
-            elif sid == "calibration":
-                calibration_panel.build(frame, self.state_)
-            elif sid == "metrics":
-                metrics_panel.build(frame, self.state_)
-            elif sid == "qc":
-                qc_panel.build(frame, self.state_)
-            elif sid == "run":
-                self._build_run_panel(frame)
+            if sid == "setup":
+                self._build_setup_step(frame)
             elif sid == "review":
                 self._build_review_step(frame)
             elif sid == "export":
                 export_panel.build(frame, self.state_)
-            else:
-                self._build_placeholder(frame, sid)
+
+    def _build_setup_step(self, frame):
+        """The "① Setup" rail step bundles Data/Calibration/Segmentation/
+        QC as sub-tabs (user preference over one long scrollable page),
+        with Run pinned below the sub-notebook (row=1, not part of the
+        notebook) so it's reachable regardless of which sub-tab is
+        active -- Run reads only `state`, not any sub-tab's widgets."""
+        frame.rowconfigure(0, weight=1)
+        frame.columnconfigure(0, weight=1)
+
+        nb = ttk.Notebook(frame)
+        nb.grid(row=0, column=0, sticky="nsew")
+
+        data_tab = tk.Frame(nb, bg=BG)
+        data_tab.columnconfigure(0, weight=1)
+        nb.add(data_tab, text="Data")
+        dataset_panel.build(data_tab, self.state_)
+
+        calibration_tab = tk.Frame(nb, bg=BG)
+        calibration_tab.columnconfigure(0, weight=1)
+        nb.add(calibration_tab, text="Calibration")
+        calibration_panel.build(calibration_tab, self.state_)
+
+        segmentation_tab = tk.Frame(nb, bg=BG)
+        segmentation_tab.columnconfigure(0, weight=1)
+        nb.add(segmentation_tab, text="Segmentation")
+        metrics_panel.build(segmentation_tab, self.state_)
+
+        qc_tab = tk.Frame(nb, bg=BG)
+        qc_tab.columnconfigure(0, weight=1)
+        nb.add(qc_tab, text="QC")
+        qc_panel.build(qc_tab, self.state_)
+
+        self._build_run_panel(frame)
 
     def _build_review_step(self, frame):
-        """The "⑥ Review" rail step combines two views (blueprint Sec
-        8.6 visual review + Sec 8.7 results dashboard) as tabs, since
-        state.py's STEP_IDS has a single "review" slot for both."""
+        """The "② Review" rail step combines two views (blueprint Sec
+        8.6 visual review + Sec 8.7 results dashboard) as tabs."""
         frame.rowconfigure(0, weight=1)
         nb = ttk.Notebook(frame)
         nb.grid(row=0, column=0, sticky="nsew")
@@ -161,16 +185,12 @@ class TEMptationApp(tk.Tk):
         nb.add(inspect_tab, text="Inspect")
         review_panel.build(inspect_tab, self.state_)
 
-    def _build_placeholder(self, frame, step_id):
-        tk.Label(
-            frame, text=f"{STEP_LABELS[step_id]} — coming soon",
-            bg=BG, fg="#999999", font=("TkDefaultFont", 12),
-        ).grid(row=0, column=0, sticky="w", pady=40, padx=4)
-
-    # ------------------------------------------------------------ run step
+    # ------------------------------------------------------------ run footer
     def _build_run_panel(self, frame):
+        """Pinned below Setup's sub-notebook -- row=1, fixed height,
+        always visible regardless of which sub-tab is active."""
         outer, inner = make_card(frame, "Run analysis")
-        outer.grid(row=0, column=0, sticky="ew")
+        outer.grid(row=1, column=0, sticky="ew", pady=(10, 0))
 
         self._run_summary_var = tk.StringVar(value="")
         tk.Label(inner, textvariable=self._run_summary_var, bg=CARD_BG, fg=LBL_FG,
@@ -195,15 +215,16 @@ class TEMptationApp(tk.Tk):
             pixel_str = f"{self.state_.pixel_size_um:.6f} µm/px"
         else:
             pixel_str = "not set"
-        out_dir = self.state_.output_dir or "(not set)"
         self._run_summary_var.set(
             f"{n_groups} group(s), {n_pairs} image pair(s) total\n"
             f"Calibration: {pixel_str}\n"
-            f"Output directory: {out_dir}"
+            f"(Output directory is set in the Export step.)"
         )
+        # Output directory is deliberately not required here -- Run never
+        # writes a file, only Export does (see export.py), which checks
+        # output_dir itself.
         ready = (
             n_pairs > 0
-            and self.state_.output_dir is not None
             and (self.state_.pixel_size_um is not None or self.state_.pixel_space_only)
             and not self.state_.run_in_progress
         )
@@ -234,10 +255,6 @@ class TEMptationApp(tk.Tk):
         pairs = self.state_.all_pairs()
         if not pairs:
             messagebox.showwarning("No data", "Add at least one group with detected pairs first.")
-            return
-        if self.state_.output_dir is None:
-            messagebox.showwarning("No output directory",
-                                    "Set an output directory in the Load data step first.")
             return
         if self.state_.pixel_size_um is None and not self.state_.pixel_space_only:
             messagebox.showwarning("No calibration",
@@ -304,19 +321,19 @@ class TEMptationApp(tk.Tk):
     def _run_done(self, result, cancel_event):
         self.state_.run_in_progress = False
         self.state_.result = result
-        self.state_.last_raw_axons = result.df_axons
+        self.state_.result_stale = False
         self._cancel_btn.configure(state="disabled")
         n_err = len(result.errors)
         if cancel_event.is_set():
             self._status_var.set(f"Cancelled — {len(result.df_axons)} axon(s) from completed images kept")
-            self.state_.step_status["run"] = "warning"
+            self.state_.step_status["setup"] = "warning"
         elif n_err:
             self._status_var.set(
                 f"Done with {n_err} error(s) — {len(result.df_axons)} axons, {len(result.df_image)} images")
-            self.state_.step_status["run"] = "warning"
+            self.state_.step_status["setup"] = "warning"
         else:
             self._status_var.set(f"Done — {len(result.df_axons)} axons, {len(result.df_image)} images")
-            self.state_.step_status["run"] = "complete"
+            self.state_.step_status["setup"] = "complete"
         self.state_.step_status["review"] = "ready"
         self.state_.step_status["export"] = "ready"
         self.state_.notify()

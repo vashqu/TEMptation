@@ -1,7 +1,11 @@
-"""Load data panel (blueprint Sec 8.2): one card per group, each with a
-folder browser and a live pair-count preview, plus an output directory
-selector. "+ Add group" is how a `treated` condition arrives later with
-no code change. Calls discovery only -- never reads pixel data."""
+"""Data sub-tab of the "Setup" step (blueprint Sec 8.2): one card per
+group, each with a folder browser and a live pair-count preview.
+"+ Add group" is how a `treated` condition arrives later with no code
+change. Calls discovery only -- never reads pixel data.
+
+The output directory selector used to live here; it moved to the
+Export step (gui/panels/export.py) since Run doesn't need it -- only
+Export writes files -- and having it here suggested otherwise."""
 
 import tkinter as tk
 from tkinter import filedialog, ttk
@@ -26,26 +30,6 @@ def build(parent, state):
         parent, text="＋ Add group", style="Ghost.TButton",
         command=lambda: _add_group_card(groups_frame, state, _next_default_name(state)),
     ).grid(row=1, column=0, sticky="w", pady=(8, 16))
-
-    out_outer, out_inner = make_card(parent, "Output directory")
-    out_outer.grid(row=2, column=0, sticky="ew")
-    out_inner.columnconfigure(1, weight=1)
-
-    out_var = tk.StringVar(value="(not set — never defaults to the data folder)")
-
-    def _browse_output():
-        path = filedialog.askdirectory(title="Select output directory")
-        if path:
-            state.output_dir = Path(path)
-            out_var.set(path)
-            state.mark_inputs_changed()
-
-    tk.Label(out_inner, text="Results will be written to:", bg=CARD_BG, fg=LBL_FG).grid(
-        row=0, column=0, sticky="w")
-    tk.Label(out_inner, textvariable=out_var, bg=CARD_BG, fg="#999999").grid(
-        row=0, column=1, sticky="w", padx=(8, 0))
-    ttk.Button(out_inner, text="Browse…", style="Ghost.TButton", command=_browse_output).grid(
-        row=0, column=2, sticky="e", padx=(8, 0))
 
     # Seed with the two conditions CLAUDE.md's data layout already has.
     _add_group_card(groups_frame, state, "normal")
