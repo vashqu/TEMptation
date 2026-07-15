@@ -23,6 +23,7 @@ in a 100-image batch on each calibration keystroke elsewhere in the
 app would make unrelated steps janky."""
 
 import dataclasses
+import threading
 import tkinter as tk
 from tkinter import ttk
 
@@ -83,8 +84,9 @@ def build(parent, state):
     scan_row = tk.Frame(parent, bg=parent["bg"])
     scan_row.grid(row=3, column=0, sticky="w", pady=(0, 12))
     availability_var = tk.StringVar(value="Mask availability not checked yet.")
-    ttk.Button(scan_row, text="Scan mask availability", style="Ghost.TButton",
-               command=lambda: _scan(state, availability_var, card_widgets)).pack(side="left")
+    scan_btn = ttk.Button(scan_row, text="Scan mask availability", style="Ghost.TButton")
+    scan_btn.configure(command=lambda: _scan(state, availability_var, card_widgets, scan_btn))
+    scan_btn.pack(side="left")
     tk.Label(scan_row, textvariable=availability_var, bg=parent["bg"], fg=LBL_FG,
              font=("TkDefaultFont", 9)).pack(side="left", padx=(10, 0))
 
@@ -142,26 +144,44 @@ def _build_mode_selector(parent, state):
     combo.bind("<<ComboboxSelected>>", _on_mode_change)
 
 
-def _scan(state, availability_var, card_widgets):
+def _scan(state, availability_var, card_widgets, scan_btn):
+    """Reads every loaded mask's pixel histogram to decide which metric
+    cards apply. Runs off the main thread (the same
+    pipeline.analyze_dataset-style pattern as Run: worker thread does
+    the file I/O, results are marshalled back via widget.after(0, ...))
+    since doing this synchronously on the GUI thread froze the whole
+    app for the duration of the scan on batches of 50-100+ images."""
     pairs = state.all_pairs()
     if not pairs:
         availability_var.set("No masks loaded yet -- add a group in Load data first.")
         return
 
-    n = len(pairs)
-    n_myelin = 0
-    n_mito = 0
-    for p in pairs:
-        try:
-            mask = dataio.read_mask(p["mask_path"])
-        except Exception:
-            continue
-        hist = dataio.mask_value_histogram(mask)
-        if hist.get(state.seg_cfg.myelin_val, 0) > 0:
-            n_myelin += 1
-        if hist.get(state.seg_cfg.mito_val, 0) > 0:
-            n_mito += 1
+    scan_btn.configure(state="disabled")
+    availability_var.set(f"Scanning {len(pairs)} mask(s)…")
 
+    def _worker():
+        n_myelin = 0
+        n_mito = 0
+        for p in pairs:
+            try:
+                mask = dataio.read_mask(p["mask_path"])
+            except Exception:
+                continue
+            hist = dataio.mask_value_histogram(mask)
+            if hist.get(state.seg_cfg.myelin_val, 0) > 0:
+                n_myelin += 1
+            if hist.get(state.seg_cfg.mito_val, 0) > 0:
+                n_mito += 1
+        scan_btn.after(
+            0,
+            lambda: _apply_scan_result(state, availability_var, card_widgets, scan_btn,
+                                        len(pairs), n_myelin, n_mito),
+        )
+
+    threading.Thread(target=_worker, daemon=True).start()
+
+
+def _apply_scan_result(state, availability_var, card_widgets, scan_btn, n, n_myelin, n_mito):
     availability_var.set(f"Scanned {n} mask(s): myelin in {n_myelin}, mitochondria in {n_mito}.")
 
     presence = {"myelin": n_myelin, "mito": n_mito}
@@ -181,6 +201,8 @@ def _scan(state, availability_var, card_widgets):
         else:
             status_var.set("available for all loaded images")
             status_lbl.configure(fg=SUCCESS_FG)
+
+    scan_btn.configure(state="normal")
 
 
 def _build_advanced_accordion(parent, state):

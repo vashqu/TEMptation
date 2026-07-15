@@ -82,11 +82,28 @@ def build(parent, state):
     tk.Label(preview_inner, textvariable=preview_var, bg=CARD_BG, fg=LBL_FG,
              justify="left", anchor="w", font=("TkDefaultFont", 9)).pack(anchor="w")
 
+    last_seen = {"key": None}
+
     def _refresh_preview():
-        df = state.result.df_axons if state.result is not None else None
+        result = state.result
+        df = result.df_axons if result is not None else None
         if df is None or df.empty:
             preview_var.set("Run analysis once (① Setup) to see a live QC preview here.")
+            last_seen["key"] = None
             return
+
+        # QCThresholds is a frozen dataclass (value-equal, not just
+        # identity-equal) -- gate on (result, thresholds) so an
+        # unrelated notify() elsewhere in Setup (adding a Data group,
+        # toggling collect_mito) doesn't re-run compute_qc_flags over
+        # every axon for no reason. _apply() calls this directly right
+        # after committing a real threshold change, so genuine edits
+        # still refresh immediately.
+        key = (id(result), state.qc_thresholds)
+        if key == last_seen["key"]:
+            return
+        last_seen["key"] = key
+
         flagged = qc_mod.compute_qc_flags(df, state.qc_thresholds)
         qc_cols = [c for c in flagged.columns if c.startswith("qc_")]
         n_images = df["image_id"].nunique() if "image_id" in df.columns else 1

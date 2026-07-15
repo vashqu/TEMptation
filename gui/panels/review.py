@@ -96,37 +96,62 @@ def build(parent, state):
 
     # ---------------------------------------------------------- helpers
 
-    def _image_qc_status(image_id) -> str:
-        """Checks both axon-level qc_* flags (df_axons) and image-level
-        ones (df_image, e.g. qc_mask_noncanonical/F6) -- an image can be
-        worth a second look even when every individual axon in it looks
-        fine, so a badge sourced from df_axons alone would miss it."""
-        result = state.result
-        if result is None or result.df_axons.empty or "image_id" not in result.df_axons.columns:
-            return "unknown"
-        sub = result.df_axons[result.df_axons["image_id"].astype(str) == str(image_id)]
-        if sub.empty:
-            return "unknown"
-        if "excluded_from_analysis" in sub.columns and sub["excluded_from_analysis"].any():
-            return "excluded"
+    badge_cache = {"result": None, "status_by_id": {}}
 
-        axon_qc_cols = [c for c in sub.columns if c.startswith("qc_")]
-        flagged = bool(axon_qc_cols and sub[axon_qc_cols].any(axis=1).any())
+    def _compute_status_by_id(result) -> dict:
+        """One pass over df_axons/df_image with vectorized boolean masks
+        (groupby/any, not a per-image filter+any in a Python loop) --
+        checks both axon-level qc_* flags and image-level ones (e.g.
+        qc_mask_noncanonical/F6: an image can be worth a second look
+        even when every individual axon in it looks fine, so axon-level
+        flags alone would miss it)."""
+        if result is None or result.df_axons.empty or "image_id" not in result.df_axons.columns:
+            return {}
+        df = result.df_axons
+        image_ids = df["image_id"].astype(str).unique()
+
+        excluded_ids = set()
+        if "excluded_from_analysis" in df.columns:
+            excluded_ids = set(df.loc[df["excluded_from_analysis"], "image_id"].astype(str))
+
+        flagged_ids = set()
+        axon_qc_cols = [c for c in df.columns if c.startswith("qc_")]
+        if axon_qc_cols:
+            flagged_ids = set(df.loc[df[axon_qc_cols].any(axis=1), "image_id"].astype(str))
 
         if not result.df_image.empty and "image_id" in result.df_image.columns:
-            img_row = result.df_image[result.df_image["image_id"].astype(str) == str(image_id)]
-            image_qc_cols = [c for c in img_row.columns if c.startswith("qc_")]
-            if image_qc_cols and img_row[image_qc_cols].any(axis=1).any():
-                flagged = True
+            img_df = result.df_image
+            image_qc_cols = [c for c in img_df.columns if c.startswith("qc_")]
+            if image_qc_cols:
+                flagged_ids |= set(img_df.loc[img_df[image_qc_cols].any(axis=1), "image_id"].astype(str))
 
-        return "flagged" if flagged else "normal"
+        status_by_id = {}
+        for image_id in image_ids:
+            if image_id in excluded_ids:
+                status_by_id[image_id] = "excluded"
+            elif image_id in flagged_ids:
+                status_by_id[image_id] = "flagged"
+            else:
+                status_by_id[image_id] = "normal"
+        return status_by_id
 
     def _populate_image_list():
+        # The status-by-id computation is the expensive part (dataframe
+        # boolean masks over every axon); only redo it when state.result
+        # itself has actually changed, not on every unrelated
+        # state.on_change() firing (a QC threshold edit elsewhere in
+        # Setup used to recompute this on every debounced keystroke even
+        # though it doesn't touch the last run's badges at all).
+        if state.result is not badge_cache["result"]:
+            badge_cache["result"] = state.result
+            badge_cache["status_by_id"] = _compute_status_by_id(state.result)
+        status_by_id = badge_cache["status_by_id"]
+
         listbox.delete(0, tk.END)
         pairs = state.all_pairs()
         listbox._pairs = pairs
         for p in pairs:
-            status = _image_qc_status(p["id"])
+            status = status_by_id.get(str(p["id"]), "unknown")
             listbox.insert(tk.END, f"{QC_BADGE_GLYPH[status]}  {p['id']}  [{p.get('group', '')}]")
 
     def _boundary_colors():

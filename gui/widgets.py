@@ -86,6 +86,68 @@ def make_card(parent, title: str, **grid_kw) -> tuple[tk.Frame, tk.Frame]:
     return outer, inner
 
 
+def make_scrollable(parent, bg: str = None) -> tuple[tk.Frame, tk.Frame]:
+    """Wraps content in a vertically scrollable area (Canvas + Scrollbar
+    + an inner Frame that holds the real content). Build into the
+    returned inner frame exactly as you would a plain Frame; grid/pack
+    the returned outer frame into `parent`.
+
+    Used for the Setup step's sub-tabs: their combined content (dataset
+    cards, ~15 segmentation parameters, ~7 QC thresholds, seven metric
+    cards) can exceed the window height with no way to reach the rest,
+    e.g. the "Image-level summaries" card being cut off at the bottom
+    with nothing below it visible or reachable."""
+    bg = bg or BG
+    outer = tk.Frame(parent, bg=bg)
+    outer.rowconfigure(0, weight=1)
+    outer.columnconfigure(0, weight=1)
+
+    canvas = tk.Canvas(outer, bg=bg, highlightthickness=0)
+    canvas.grid(row=0, column=0, sticky="nsew")
+    scrollbar = ttk.Scrollbar(outer, orient="vertical", command=canvas.yview)
+    scrollbar.grid(row=0, column=1, sticky="ns")
+    canvas.configure(yscrollcommand=scrollbar.set)
+
+    inner = tk.Frame(canvas, bg=bg)
+    inner_window = canvas.create_window((0, 0), window=inner, anchor="nw")
+
+    def _on_inner_configure(_event=None):
+        canvas.configure(scrollregion=canvas.bbox("all"))
+
+    def _on_canvas_configure(event):
+        # inner's width tracks the canvas's -- only its height should
+        # ever exceed the viewport, never its width (no horizontal
+        # scrollbar is offered).
+        canvas.itemconfigure(inner_window, width=event.width)
+
+    inner.bind("<Configure>", _on_inner_configure)
+    canvas.bind("<Configure>", _on_canvas_configure)
+
+    def _on_mousewheel(event):
+        if event.num == 5 or event.delta < 0:
+            canvas.yview_scroll(1, "units")
+        elif event.num == 4 or event.delta > 0:
+            canvas.yview_scroll(-1, "units")
+
+    def _bind_mousewheel(_event=None):
+        # bind_all is scoped to hover (Enter/Leave), not permanent, so
+        # scrolling elsewhere in the app is never hijacked by whichever
+        # scrollable tab was last visited.
+        canvas.bind_all("<MouseWheel>", _on_mousewheel)
+        canvas.bind_all("<Button-4>", _on_mousewheel)
+        canvas.bind_all("<Button-5>", _on_mousewheel)
+
+    def _unbind_mousewheel(_event=None):
+        canvas.unbind_all("<MouseWheel>")
+        canvas.unbind_all("<Button-4>")
+        canvas.unbind_all("<Button-5>")
+
+    canvas.bind("<Enter>", _bind_mousewheel)
+    canvas.bind("<Leave>", _unbind_mousewheel)
+
+    return outer, inner
+
+
 def debounce(widget: tk.Misc, delay_ms: int, callback):
     """Returns a wrapper that delays `callback` by delay_ms, canceling
     any pending call from a previous invocation. Bind the wrapper to a

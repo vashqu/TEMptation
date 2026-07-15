@@ -41,6 +41,7 @@ from .widgets import (
     STATUS_GLYPHS,
     apply_base_styles,
     make_card,
+    make_scrollable,
 )
 
 APP_TITLE = "TEMptation — Nerve Morphometry"
@@ -134,35 +135,35 @@ class TEMptationApp(tk.Tk):
 
     def _build_setup_step(self, frame):
         """The "① Setup" rail step bundles Data/Calibration/Segmentation/
-        QC as sub-tabs (user preference over one long scrollable page),
-        with Run pinned below the sub-notebook (row=1, not part of the
-        notebook) so it's reachable regardless of which sub-tab is
-        active -- Run reads only `state`, not any sub-tab's widgets."""
+        QC as sub-tabs, with Run pinned below the sub-notebook (row=1,
+        not part of the notebook) so it's reachable regardless of which
+        sub-tab is active -- Run reads only `state`, not any sub-tab's
+        widgets. Each sub-tab is independently scrollable
+        (widgets.make_scrollable): their combined content can exceed the
+        window height (Segmentation alone has a mode selector, seven
+        metric cards, and ~15 advanced parameters), and a ttk.Notebook
+        tab doesn't scroll on its own -- content below the fold was
+        simply unreachable before this."""
         frame.rowconfigure(0, weight=1)
         frame.columnconfigure(0, weight=1)
 
         nb = ttk.Notebook(frame)
         nb.grid(row=0, column=0, sticky="nsew")
 
-        data_tab = tk.Frame(nb, bg=BG)
-        data_tab.columnconfigure(0, weight=1)
-        nb.add(data_tab, text="Data")
-        dataset_panel.build(data_tab, self.state_)
+        def _add_scrollable_tab(text, panel_build):
+            tab = tk.Frame(nb, bg=BG)
+            tab.rowconfigure(0, weight=1)
+            tab.columnconfigure(0, weight=1)
+            nb.add(tab, text=text)
+            scroll_outer, scroll_inner = make_scrollable(tab)
+            scroll_outer.grid(row=0, column=0, sticky="nsew")
+            scroll_inner.columnconfigure(0, weight=1)
+            panel_build(scroll_inner, self.state_)
 
-        calibration_tab = tk.Frame(nb, bg=BG)
-        calibration_tab.columnconfigure(0, weight=1)
-        nb.add(calibration_tab, text="Calibration")
-        calibration_panel.build(calibration_tab, self.state_)
-
-        segmentation_tab = tk.Frame(nb, bg=BG)
-        segmentation_tab.columnconfigure(0, weight=1)
-        nb.add(segmentation_tab, text="Segmentation")
-        metrics_panel.build(segmentation_tab, self.state_)
-
-        qc_tab = tk.Frame(nb, bg=BG)
-        qc_tab.columnconfigure(0, weight=1)
-        nb.add(qc_tab, text="QC")
-        qc_panel.build(qc_tab, self.state_)
+        _add_scrollable_tab("Data", dataset_panel.build)
+        _add_scrollable_tab("Calibration", calibration_panel.build)
+        _add_scrollable_tab("Segmentation", metrics_panel.build)
+        _add_scrollable_tab("QC", qc_panel.build)
 
         self._build_run_panel(frame)
 
@@ -175,7 +176,11 @@ class TEMptationApp(tk.Tk):
 
         dashboard_tab = tk.Frame(nb, bg=BG)
         dashboard_tab.columnconfigure(0, weight=1)
-        dashboard_tab.rowconfigure(0, weight=1)
+        # Row weighting is left entirely to results_panel.build() (it
+        # weights its own plot row, not row 0) -- also setting row 0's
+        # weight here made an empty/collapsed status label (see
+        # results.py's _set_status) claim half the vertical space,
+        # which was the visible gap above "Summary".
         nb.add(dashboard_tab, text="Dashboard")
         results_panel.build(dashboard_tab, self.state_)
 

@@ -69,6 +69,89 @@ def test_gui2_constructs_with_three_steps(app):
     assert set(app._panel_frames.keys()) == {"setup", "review", "export"}
 
 
+def test_gui2_setup_segmentation_tab_is_scrollable(app):
+    """Regression test: Setup's sub-tab content (mode selector, seven
+    metric cards, ~15 advanced parameters on the Segmentation tab alone)
+    can exceed the window height, and a bare ttk.Notebook tab doesn't
+    scroll -- content below the fold (e.g. the "Image-level summaries"
+    card) was simply unreachable before widgets.make_scrollable()."""
+    import tkinter as tk
+    from tkinter import ttk
+
+    def _find_notebook(widget):
+        if isinstance(widget, ttk.Notebook):
+            return widget
+        for child in widget.winfo_children():
+            found = _find_notebook(child)
+            if found is not None:
+                return found
+        return None
+
+    def _find_canvas(widget):
+        if isinstance(widget, tk.Canvas):
+            return widget
+        for child in widget.winfo_children():
+            found = _find_canvas(child)
+            if found is not None:
+                return found
+        return None
+
+    app._select_step("setup")
+    app.update_idletasks()
+
+    nb = _find_notebook(app._panel_frames["setup"])
+    assert nb is not None
+    tab_ids = nb.tabs()
+    segmentation_tab = nb.nametowidget(tab_ids[2])  # Data, Calibration, Segmentation, QC
+    nb.select(segmentation_tab)
+    app.update_idletasks()
+
+    canvas = _find_canvas(segmentation_tab)
+    assert canvas is not None
+    bbox = canvas.bbox("all")
+    assert bbox is not None
+    content_height = bbox[3] - bbox[1]
+    assert content_height > canvas.winfo_height(), (
+        "expected Segmentation tab content to exceed the viewport (that's exactly "
+        "the case this test guards -- if it no longer does, scrolling may not be "
+        "needed, but this assertion should be revisited rather than silently passing"
+    )
+
+    canvas.yview_moveto(1.0)
+    app.update_idletasks()
+    assert canvas.yview()[1] == pytest.approx(1.0)
+
+
+def test_gui2_dashboard_summary_card_sits_at_top_with_no_gap(app, tmp_path):
+    """Regression test for the reported gap above the Summary row:
+    app.py used to set dashboard_tab.rowconfigure(0, weight=1) on top of
+    results.py's own rowconfigure(2, weight=1) on the same frame, so an
+    empty/collapsed status row (row 0) still claimed half the vertical
+    space. After a run, the Summary card should sit flush at the top."""
+    from temptation import discovery
+
+    pairs, _ = discovery._scan_folder_recursive(NORMAL_DIR)
+    _run_and_wait(app, pairs, "normal", tmp_path)
+
+    app._select_step("review")
+    app.update_idletasks()
+
+    import tkinter as tk
+
+    def _find_cards(widget):
+        found = []
+        if isinstance(widget, tk.Frame) and str(widget.cget("highlightthickness")) not in ("0",):
+            found.append(widget)
+        for child in widget.winfo_children():
+            found.extend(_find_cards(child))
+        return found
+
+    cards = [c for c in _find_cards(app._panel_frames["review"]) if c.winfo_manager() == "grid"]
+    assert cards, "expected the Dashboard tab's Summary/Group comparison cards to be gridded"
+    summary_card = min(cards, key=lambda c: c.winfo_y())
+    assert summary_card.winfo_y() == 0
+
+
 def test_gui2_step_navigation_updates_rail(app):
     app._select_step("review")
     assert app._current_step == "review"
@@ -138,7 +221,14 @@ def test_gui2_result_survives_input_edits_but_flips_stale(app, tmp_path):
 
 def test_gui2_metrics_scan_detects_myelin_presence(app):
     """normal_data/162-165's masks all contain myelin -- the scan should
-    report full availability, not just "not yet scanned"."""
+    report full availability, not just "not yet scanned". _scan() runs
+    the actual mask reads on a background thread (moved off the GUI
+    thread so a 100-image scan doesn't freeze the app -- see
+    metrics.py's _scan docstring), so this drives it through a real
+    mainloop and waits for the button to re-enable rather than asserting
+    synchronously right after the call."""
+    import tkinter as tk
+
     from temptation import discovery
 
     from gui.panels.metrics import _scan
@@ -149,13 +239,24 @@ def test_gui2_metrics_scan_detects_myelin_presence(app):
     entry.pairs = pairs
     app.state_.groups["normal"] = entry
 
-    import tkinter as tk
     availability_var = tk.StringVar()
     status_var = tk.StringVar()
     status_lbl = tk.Label(app)
+    scan_btn = tk.Button(app)
     card_widgets = {"g-ratio distribution": (status_var, status_lbl, ("myelin",), False)}
 
-    _scan(app.state_, availability_var, card_widgets)
+    def start_scan():
+        _scan(app.state_, availability_var, card_widgets, scan_btn)
+        app.after(20, poll)
+
+    def poll():
+        if str(scan_btn.cget("state")) == "disabled":
+            app.after(20, poll)
+        else:
+            app.quit()
+
+    app.after(20, start_scan)
+    app.mainloop()
 
     assert "myelin in 4" in availability_var.get()
     assert "available" in status_var.get()
