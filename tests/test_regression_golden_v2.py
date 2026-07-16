@@ -70,7 +70,7 @@ def test_fill_mode_axon_counts_match_legacy_mode(group, tmp_path, monkeypatch):
     """On these two specific folders (the golden-baseline regression
     anchor), axon counts happen to be identical between modes. This is
     NOT a general guarantee -- see test_fill_mode_can_merge_oversegmented_
-    axons below and docs/phase2b_impact.md for 7/100 real-dataset images
+    axons below and dev/phase2b_impact.md for 7/100 real-dataset images
     where fill mode legitimately produces one fewer axon (a large
     mitochondrion bisecting an axon's footprint under the legacy bug was
     causing watershed to over-segment it into two pieces). Pinned here so
@@ -92,7 +92,7 @@ def test_fill_mode_can_merge_oversegmented_axons(tmp_path, monkeypatch):
     """Documents and pins the real (dataset-wide, not golden-anchor-local)
     exception to the above: image 172 in normal_data/171-175 has 16 axons
     under legacy mode and 15 under fill mode. Verified mechanism (see
-    docs/phase2b_impact.md): under legacy, a large mitochondrion bisects
+    dev/phase2b_impact.md): under legacy, a large mitochondrion bisects
     one axon's axon_only footprint, so axoplasm is disconnected there and
     watershed produces a real fiber plus a spurious ~900px fragment; under
     fill, that same mitochondrion (99.2% of the connecting gap) is

@@ -7,8 +7,7 @@ metrics, image-level distribution statistics, and QC flags — for **normal**,
 
 Two interfaces, one engine: a **CLI** (`measure_nerve.py`) and a **GUI**
 (`measure_nerve_gui.py`), both calling the same `temptation/` package. Neither
-reimplements the other's logic — see `docs/known_issues.md` and
-`tests/test_gui_has_no_metrics.py` if you're curious how that's enforced.
+reimplements the other's logic.
 
 > **Not a diagnostic tool.** Every metric here is a morphometric measurement derived
 > from a segmentation mask. None of it is validated for, or intended for, clinical
@@ -21,13 +20,11 @@ reimplements the other's logic — see `docs/known_issues.md` and
 | Doc | What's in it |
 |---|---|
 | This file | Install, quick start, CLI/GUI overview, troubleshooting |
-| `how_to_use.txt` | The same content in longer, plain-text, step-by-step form |
 | `docs/metrics.md` | Every output column: formula, interpretation, NaN conditions |
 | `docs/qc.md` | Every QC flag, thresholds, what can and can't trigger exclusion |
-| `docs/known_issues.md` | Eight defects found during development (F1–F8): what was wrong, current fix status |
 | `docs/pathology_score.md` | The planned (not yet built) morphometric pathology score |
-| `CHANGELOG.md` | What changed, phase by phase |
-| `config.example.yaml` | `AnalysisConfig` structure reference (not yet wired to `--config`) |
+| `docs/validation_report.md` | Real-data checks: which metrics behave as expected, which look questionable and why |
+| `notebooks/validation.ipynb` | The same checks, runnable and reproducible |
 
 ---
 
@@ -91,14 +88,15 @@ python measure_nerve_gui.py
 A three-step workflow, left-hand rail:
 
 **① Setup** — four sub-tabs, all scrollable:
-- **Data** — one card per group (`+ Add group` for e.g. a future `treated` condition),
+- **Data** — one card per group (`+ Add group` for e.g. a `treated` condition),
   each with a folder browser and a live pair-count preview.
 - **Calibration** — pixel size (µm/px), with a derived `1 µm ≈ N px` readout, and a
-  "pixel-space only" opt-out for uncalibrated data (see `CHANGELOG.md`'s "Not yet
-  implemented" section for its current limits).
+  "pixel-space only" checkbox for uncalibrated data (currently runs with an identity
+  scale rather than fully restructuring output columns — treat it as a placeholder,
+  not a complete pixel-free mode).
 - **Segmentation** — a labeled **Auto-detect / Control / Pathology** mode selector
-  (see `docs/known_issues.md` F3 for why this matters), mask-availability scanning,
-  seven informational metric cards, and an advanced parameter accordion.
+  (see "Auto-detect mode" below), mask-availability scanning, seven informational
+  metric cards, and an advanced parameter accordion.
 - **QC** — every threshold field, plus a live preview of flag counts recomputed
   against your last run as you edit (`docs/qc.md`).
 
@@ -113,10 +111,10 @@ Run is pinned below the sub-tabs — reachable regardless of which one is open.
 
 **③ Export** — output directory, a literal checklist of what will be written (with
 row-count estimates and overwrite warnings), and an "Include 'mode' column" toggle
-(off by default — see `docs/known_issues.md` F3).
+(off by default — see "Auto-detect mode" below).
 
-The pre-redesign single-window GUI is retained as `measure_nerve_gui_legacy.py` if
-you need it.
+The previous single-window GUI is retained as `measure_nerve_gui_legacy.py` if you
+need it.
 
 ---
 
@@ -167,7 +165,7 @@ assigning a group.
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--mode` | `auto` | `auto` / `normal` / `pathological` — see `docs/known_issues.md` F3 |
+| `--mode` | `auto` | `auto` / `normal` / `pathological` — see "Auto-detect mode" below |
 | `--myelin-threshold INT` | `200` | Myelin px count threshold for `auto` mode |
 | `--myelin-val`, `--axoplasm-val`, `--mito-val INT` | `64`/`192`/`128` | Mask label values |
 | `--smoothing-radius INT` | `1` | Morphological smoothing radius (px) |
@@ -178,9 +176,9 @@ assigning a group.
 | `--watershed-compactness FLOAT` | `0.001` | Watershed compactness |
 | `--watershed-beta FLOAT` | `1.0` | Size-bias strength for weighted watershed |
 | `--assign-detached-myelin` | `none` | `none` / `nearest` |
-| `--mito-hole-handling` | `fill` | `fill` (correct, default) / `legacy` (reproduces F1's bug — see `docs/known_issues.md`) |
-| `--mito-assignment` | `centroid` | `centroid` (default) / `overlap` / `legacy` (reproduces F8's bug) |
-| `--demyelination-reference FRACTION` | none | Reference `myelin_area_fraction_of_fov` for `image_demyelination_index`. No default — see `docs/known_issues.md` F4 |
+| `--mito-hole-handling` | `fill` | `fill` (correct, default) / `legacy` (an older, less accurate mitochondrial-area algorithm, kept only to reproduce old numbers) |
+| `--mito-assignment` | `centroid` | `centroid` (default) / `overlap` / `legacy` (an older assignment method that can double-count a mitochondrion split across two axons, kept only to reproduce old numbers) |
+| `--demyelination-reference FRACTION` | none | Reference `myelin_area_fraction_of_fov` for `image_demyelination_index`. No default — this is a biological calibration choice; see `docs/metrics.md` §7.4 |
 
 ### Quality control (see `docs/qc.md`)
 
@@ -228,6 +226,20 @@ Use ImageJ/Fiji to measure the scale bar length in pixels if it isn't already kn
 
 ---
 
+## Auto-detect mode
+
+`--mode auto` (the default) classifies **each image independently** by its own
+myelin pixel count against `--myelin-threshold`. This is a per-image algorithmic
+choice, completely independent of the `group` label you assign per folder — an
+image inside a folder you've labeled `pathological` can still resolve to
+`mode=normal` if it happens to contain enough myelin pixels. If that's not what you
+want, set `--mode normal` or `--mode pathological` explicitly to force every image
+in a run to be treated the same way, or use the GUI's Segmentation tab, which makes
+the distinction explicit with a clearly-labeled selector. See `docs/metrics.md` §1
+for the `mode` column's precise definition.
+
+---
+
 ## Troubleshooting
 
 **No axons detected**
@@ -243,11 +255,15 @@ Use ImageJ/Fiji to measure the scale bar length in pixels if it isn't already kn
 - Try lowering `--min-myelin-area`
 
 **Myelin metrics all `NaN` in pathological tissue, and that seems expected but you want a demyelination number anyway**
-- Supply `--demyelination-reference` — see `docs/known_issues.md` F4
+- Supply `--demyelination-reference` (see `docs/metrics.md` §7.4) — per-axon myelin
+  metrics stay `NaN` when myelin has detached from the axon (there's nothing there to
+  measure), but `image_demyelination_index` is computed from the whole mask instead
+  and survives detachment, once you give it a reference value
 
 **A mitochondrial number looks implausibly small, or `mito_outside_frac` is exactly `1.0`**
 - Check `schema_version` in the row — `"1.0"` means `--mito-hole-handling legacy` was
-  used (reproduces a known bug on purpose). Re-run with the default `fill`
+  used (an older, less accurate algorithm, kept only to reproduce old numbers).
+  Re-run with the default `fill`
 
 **Too many spurious small fibers**
 - Increase `--min-axon-area`

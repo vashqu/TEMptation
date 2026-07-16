@@ -151,10 +151,10 @@ IMAGE_COLUMNS_V2 = (
     + NEW_IMAGE_ALL_SUFFIXED_COLUMNS
 )
 
-# New in Phase 3b: one row per real mitochondrion (mitochondria_metrics.csv,
-# --write-mito-csv). Only produced when mito_assignment != "legacy" -- see
-# docs/phase3a_impact.md for why a per-mitochondrion table requires the
-# corrected global assignment to be meaningful.
+# One row per real mitochondrion (mitochondria_metrics.csv, --write-mito-csv).
+# Only produced when mito_assignment != "legacy" -- see dev/phase3a_impact.md
+# for why a per-mitochondrion table requires the corrected global assignment
+# to be meaningful.
 MITO_COLUMNS = (
     "mito_id", "parent_axon_id",
     "mito_area_um2", "mito_perimeter_um",

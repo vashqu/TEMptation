@@ -39,10 +39,9 @@ def analyze_image_legacy(
     Returns (df_axons, df_image, labels_ws, resolved_mode, df_mito).
     df_mito is empty when mito_assignment="legacy" (no global per-
     mitochondrion table is meaningful in that mode -- see
-    docs/phase3a_impact.md). compat.measure_image() unpacks this 5-tuple
+    dev/phase3a_impact.md). compat.measure_image() unpacks this 5-tuple
     and returns only the first 4, preserving the legacy signature for the
-    GUI. `tem` is accepted but unused (matches the original -- see
-    AUDIT.md / F8).
+    GUI. `tem` is accepted but unused (matches the original).
 
     `reference_myelin_fraction` (Phase 4) feeds image_demyelination_index
     (see summaries.demyelination_index). Deliberately no default: this is
@@ -103,10 +102,10 @@ def analyze_image_legacy(
 
     props = regionprops(labels_ws)
     rows = []
-    mito_rows = []  # Phase 3b: one row per real mitochondrion, only
-    # populated when mito_assignment != "legacy" (a "one row per
-    # mitochondrion" table is only meaningful once nothing can fragment
-    # into two rows -- see docs/phase3a_impact.md).
+    mito_rows = []  # one row per real mitochondrion, only populated when
+    # mito_assignment != "legacy" (a "one row per mitochondrion" table is
+    # only meaningful once nothing can fragment into two rows -- see
+    # dev/phase3a_impact.md).
 
     for p in props:
         fiber_id = p.label

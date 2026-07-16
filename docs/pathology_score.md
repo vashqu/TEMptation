@@ -7,8 +7,8 @@
 > plan so a future implementer (human or model) has the design decided in advance,
 > and so this feature is never accidentally presented as more validated than it is.
 >
-> **Explicitly reviewed and deferred during Phase 9 validation** (`docs/validation_report.md`
-> §5–6): only 3 of the 6 intended components (`g_ratio_high`, `g_ratio_low`,
+> **Explicitly reviewed and deferred** (see `docs/validation_report.md` §5–6 for the
+> numbers): only 3 of 6 intended components (`g_ratio_high`, `g_ratio_low`,
 > `low_circularity`) have real calibrated thresholds; none of the other 3 gained one
 > from real-data inspection, and `high_mito_occupancy` in particular showed the
 > *opposite* of its assumed direction on this dataset (pathological mean lower than
@@ -30,14 +30,12 @@ math is correct.
 
 ## Why this isn't built yet
 
-CLAUDE.md's own priority order (§11) places this last, after QC, image-level
-summaries, and spatial metrics — deliberately: a pathology score is only as
-trustworthy as the thresholds and weights that go into it, and several of those
-inputs need dataset-specific calibration this tool cannot supply on its own (see
-`docs/qc.md`'s discussion of `None`-valued QC thresholds, which is the same
-underlying issue). Phase 9 (biological validation, not yet started as of this
-writing) is where real-data distributions get inspected before any threshold here
-is set to a non-`None` value.
+A pathology score is only as trustworthy as the thresholds and weights that go into
+it, and several of those inputs need dataset-specific calibration this tool cannot
+supply on its own (see `docs/qc.md`'s discussion of `None`-valued QC thresholds,
+which is the same underlying issue). Real-data distributions need to be inspected
+before any threshold here is set to a non-`None` value — see
+`docs/validation_report.md` for that inspection on this repo's own dataset.
 
 ## Planned design (rule-based, not a classifier)
 
@@ -46,7 +44,7 @@ a weighted sum of independently-inspectable abnormality indicators, each of whic
 a biologist can look at and agree or disagree with individually. If a future
 implementer is tempted to fit weights so that `normal` and `pathological` groups
 separate better, that is hand-fitting a classifier to two labels and is explicitly
-out of scope; see `docs/known_issues.md`'s note on Phase 9's validation risk.
+out of scope.
 
 Candidate components (from `temptation.config.ComponentSpec`: a metric name, a
 comparison operator, a threshold, and a weight):
@@ -85,12 +83,12 @@ own design (`docs/qc.md`): always show the reasons, never just the verdict.
 - GUI: nothing today. When built, it should live in Setup (a way to enable it and see
   which components are active/blocked) and the Results dashboard (the score's
   distribution across groups — **descriptively**, not as a hypothesis test or
-  classifier accuracy figure; see the note on Phase 9 below).
+  classifier accuracy figure).
 
-## What "done" looks like (Phase 9 gate)
+## What "done" looks like
 
-Per CLAUDE.md §9/§20: implement the score only after QC thresholds and image-level
-summaries have real data behind them, run it on both `normal_data` and
-`pathological_data`, and **report the distribution descriptively — no hypothesis
-test, no ROC curve, no accuracy number.** The temptation to tune weights until the
-two groups separate is exactly the thing this whole document exists to prevent.
+Implement the score only after QC thresholds and image-level summaries have real
+data behind them, run it on both `normal_data` and `pathological_data`, and
+**report the distribution descriptively — no hypothesis test, no ROC curve, no
+accuracy number.** The temptation to tune weights until the two groups separate is
+exactly the thing this whole document exists to prevent.

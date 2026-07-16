@@ -1,15 +1,7 @@
-"""Step-rail shell for the TEMptation GUI (IMPLEMENTATION_BLUEPRINT.md
-Sec 8.1). Owns the window, the rail, and the persistent status/progress
+"""Step-rail shell for the TEMptation GUI. Owns the window, the rail, and the persistent status/progress
 bar; delegates step content to gui/panels/*.py and all analysis work to
 temptation.pipeline.analyze_dataset. This module and the panels it
-imports must never compute a metric (enforced by
-tests/test_gui_has_no_metrics.py, extended over this package).
-
-Post-launch revision: real usage collapsed the original 7-step rail
-(Load data/Calibrate/Metrics/QC/Run/Review/Export) into 3
-(Setup/Review/Export) -- Setup bundles the first four as sub-tabs with
-Run pinned below, since Run needs none of those tabs' widgets, only
-what's already on `state` by the time it's clicked.
+imports must never compute a metric.
 """
 
 import threading
@@ -178,9 +170,7 @@ class TEMptationApp(tk.Tk):
         dashboard_tab.columnconfigure(0, weight=1)
         # Row weighting is left entirely to results_panel.build() (it
         # weights its own plot row, not row 0) -- also setting row 0's
-        # weight here made an empty/collapsed status label (see
-        # results.py's _set_status) claim half the vertical space,
-        # which was the visible gap above "Summary".
+        # weight here made an empty/collapsed status label row expand to fill the notebook, which was visually jarring.
         nb.add(dashboard_tab, text="Dashboard")
         results_panel.build(dashboard_tab, self.state_)
 

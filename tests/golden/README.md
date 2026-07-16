@@ -46,8 +46,9 @@ Per-image axon counts (pathological): path_1→7, path_2→2, path_3→5,
 path_4→3, path_5→4, path_6→4.
 
 `--mode auto` resolves `path_1`/`path_2` as `PATHOLOGICAL` and
-`path_3`..`path_6` as `NORMAL` — this is expected (see `AUDIT.md` finding
-F3) and is not a bug to fix in these baselines.
+`path_3`..`path_6` as `NORMAL` — `mode` is auto-detected per image from myelin
+content, independent of the `group` label (see `docs/metrics.md` §1). Expected,
+and not a bug to fix in these baselines.
 
 ## Determinism
 

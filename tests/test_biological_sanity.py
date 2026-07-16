@@ -89,9 +89,8 @@ def test_normal_axon_shape_irregularity_at_least_one(normal_axons):
 
 def test_normal_circularity_at_most_one(normal_axons):
     """Legacy `circularity` is a biased estimator that never exceeds 1 in
-    practice (it *undershoots*, per docs/known_issues.md F5) -- this
-    assertion is the invariant CLAUDE.md Sec 13 asks for, not a claim
-    that 1.0 means "perfect circle" (it doesn't; see docs/metrics.md)."""
+    practice (it *undershoots* -- see docs/metrics.md), so this is a real
+    invariant, not a claim that 1.0 means "perfect circle" (it doesn't)."""
     circularity = normal_axons["circularity"].dropna()
     assert (circularity <= 1).all()
     # axon_circularity_crofton is the unbiased estimator and can drift
@@ -113,16 +112,15 @@ def test_normal_mean_g_ratio_within_documented_range(normal_axons):
     assert 0.55 <= mean_g_ratio <= 0.75, f"mean_g_ratio={mean_g_ratio!r} outside documented range"
 
 
-# ---------------------------------------------------------------- documented degeneracies (F4)
+# ---------------------------------------------------------------- documented degeneracies
 
 def test_pathological_axon_vol_fraction_is_degenerate(pathological_axons):
-    """CLAUDE.md Sec 0 F4: myelin is fully detached in this group, so
-    axon_vol_fraction (axon_area/fiber_area) collapses to exactly 1.0
-    for every axon -- fiber_area_px is defined to equal axon_area_px
-    when watershed has no myelin channel to expand into. This is a
-    documented, expected degeneracy, not something a future change
-    should silently "fix" without updating docs/known_issues.md F4 and
-    this test together."""
+    """Myelin is fully detached in this group, so axon_vol_fraction
+    (axon_area/fiber_area) collapses to exactly 1.0 for every axon --
+    fiber_area_px is defined to equal axon_area_px when watershed has no
+    myelin channel to expand into. This is a documented, expected
+    degeneracy (see docs/metrics.md), not something a future change
+    should silently "fix" without updating this test too."""
     assert sorted(pathological_axons["axon_vol_fraction"].unique()) == [1.0]
 
 

@@ -1,4 +1,4 @@
-"""Shared UI state (IMPLEMENTATION_BLUEPRINT.md Sec 8.11): panels read
+"""Shared UI state: panels read
 and mutate this directly, then call notify() so app.py can refresh the
 step rail. Deliberately not a frozen dataclass or an event bus -- a
 single-window app with under ten panels and one background worker
@@ -21,13 +21,6 @@ STEP_LABELS = {
     "export": "③ Export",
 }
 
-# Any edit to an input (data/calibration/segmentation/QC, all now living
-# inside the single "setup" step) marks a previous run's results stale
-# (blueprint Sec 8.1's "results can never be attributed to the wrong
-# parameters", adapted after the 7-step -> 3-step reorg: rather than
-# nulling `result` outright -- which used to blank the dashboard/export
-# checklist mid-keystroke, see AppState.mark_inputs_changed below --
-# this only demotes the rail glyph and flips `result_stale`).
 DOWNSTREAM_OF_INPUTS = ["review", "export"]
 
 

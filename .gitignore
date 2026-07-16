@@ -2,3 +2,12 @@ __pycache__/
 *.pyc
 .pytest_cache/
 *.egg-info/
+
+# Internal dev/engineering-history material -- not part of the shipped tool.
+# See dev/README.md.
+dev/
+tests/
+notebooks/
+measure_nerve_gui_legacy.py
+docs/validation_report.md
+requirements-dev.txt

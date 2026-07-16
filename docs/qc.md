@@ -44,8 +44,8 @@ comparison used here, but `None` is the explicit, documented "not yet calibrated
 excluded from `EXCLUDABLE_FLAGS`, regardless of `--exclude-qc-failed`. This is deliberate,
 not an oversight:
 
-- `qc_no_myelin` fires on **every single pathological axon** — myelin is detached, not a
-  data-quality problem (see `docs/known_issues.md` F4). Making this excludable would
+- `qc_no_myelin` fires on **every single pathological axon** in this repo's own test
+  data — myelin is detached, not a data-quality problem. Making this excludable would
   silently delete the entire pathological group under `--exclude-qc-failed`.
 - `qc_low_mito_count_clustering` fires whenever fewer than 3 mitochondria are present,
   which is the *common* case for a typical axon crop, not rare or defective.
@@ -59,17 +59,18 @@ is what exclusion is for.
 
 ## `axon_area_um2 > fiber_area_um2`: strict `>`, not `>=`
 
-CLAUDE.md's original spec used `>=`. In practice `axon_area_um2 == fiber_area_um2` is a
-**structural invariant**, not an anomaly, under the default `--assign-detached-myelin
-none`: it's exactly what happens whenever zero myelin was captured for a fiber, which
-includes every pathological axon and any "normal"-mode image whose myelin has detached
-(F3/F4). That case is already tracked (and deliberately non-excludable) via `qc_no_myelin`.
-Using `>=` here made `qc_invalid_area_relation` redundant with `qc_no_myelin` in exactly
-the one case that must never exclude — except this flag *was* excludable, so it silently
-excluded 100% of a pathological image's axons under `--exclude-qc-failed` before this was
-caught. Strict `>` keeps the flag meaningful as a genuine geometric-impossibility check,
-which can actually occur under `--assign-detached-myelin nearest` (where `fiber_area_px`
-is computed independently rather than as a superset of the axon).
+`axon_area_um2 == fiber_area_um2` is a **structural invariant**, not an anomaly, under
+the default `--assign-detached-myelin none`: it's exactly what happens whenever zero
+myelin was captured for a fiber, which includes every pathological axon and any
+"normal"-mode image whose myelin has detached. That case is already tracked (and
+deliberately non-excludable) via `qc_no_myelin`. Using `>=` here would make
+`qc_invalid_area_relation` redundant with `qc_no_myelin` in exactly the one case that
+must never exclude — and unlike `qc_no_myelin`, this flag *is* excludable, so a `>=`
+version would silently exclude 100% of a pathological image's axons under
+`--exclude-qc-failed`. Strict `>` keeps the flag meaningful as a genuine
+geometric-impossibility check, which can actually occur under
+`--assign-detached-myelin nearest` (where `fiber_area_px` is computed independently
+rather than as a superset of the axon).
 
 ## Exclusion reasons
 
@@ -112,8 +113,8 @@ see the trap above.
 
 ## GUI live preview
 
-The Setup → QC tab's live preview (blueprint-era feature) recomputes flag counts
-against the last completed run's raw per-axon metrics whenever you edit a threshold —
+The Setup → QC tab's live preview recomputes flag counts against the last completed
+run's raw per-axon metrics whenever you edit a threshold —
 no re-segmentation, and it survives later parameter edits without needing a fresh Run.
 It calls `temptation.qc.compute_qc_flags` directly, so the preview can never drift from
 what an actual Run would produce.

@@ -1,6 +1,4 @@
-"""Design tokens and small reusable widgets, migrated from the
-pre-Phase-7 measure_nerve_gui.py (Tooltip, card chrome, ttk styles) so
-every panel looks consistent without redefining fonts and colors."""
+"""Design tokens and small reusable widgets (cards, scrollable areas, tooltips, etc.) for the TEMptation GUI"""
 
 import tkinter as tk
 from tkinter import ttk
