@@ -23,8 +23,7 @@ reimplements the other's logic.
 | `docs/metrics.md` | Every output column: formula, interpretation, NaN conditions |
 | `docs/qc.md` | Every QC flag, thresholds, what can and can't trigger exclusion |
 | `docs/pathology_score.md` | The planned (not yet built) morphometric pathology score |
-| `docs/validation_report.md` | Real-data checks: which metrics behave as expected, which look questionable and why |
-| `notebooks/validation.ipynb` | The same checks, runnable and reproducible |
+
 
 ---
 
