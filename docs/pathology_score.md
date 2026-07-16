@@ -4,17 +4,9 @@
 > today, no `--pathology-score` CLI flag exists, and no `pathology_score.py` module
 > exists. `temptation.config.PathologyScoreConfig`/`ComponentSpec` are scaffolding
 > dataclasses only — they aren't read by anything yet. This document describes the
-> plan so a future implementer (human or model) has the design decided in advance,
+> plan so a future implementer has the design decided in advance,
 > and so this feature is never accidentally presented as more validated than it is.
 >
-> **Explicitly reviewed and deferred** (see `docs/validation_report.md` §5–6 for the
-> numbers): only 3 of 6 intended components (`g_ratio_high`, `g_ratio_low`,
-> `low_circularity`) have real calibrated thresholds; none of the other 3 gained one
-> from real-data inspection, and `high_mito_occupancy` in particular showed the
-> *opposite* of its assumed direction on this dataset (pathological mean lower than
-> normal). Building a v0 from just the 3 usable, non-mitochondrial components was
-> considered and declined — reassess once more components are calibrated, not by
-> shipping a partial score early.
 
 ## The one thing that must never change about this feature
 
